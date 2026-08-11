@@ -1,0 +1,6 @@
+{
+  "name": "Gradient - Task Differentiation & Student Work Studio",
+  "description": "Differentiate classroom tasks into Support, Core, and Extend concentrations with AI marking and downloadable student work packages.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,27 @@
+{
+  "name": "EduTN43 GRADIENT - Differentiation Studio",
+  "short_name": "EduTN43 Gradient",
+  "description": "Classroom Task Differentiation & Formative Assessment Studio for IB MYP & Cambridge IGCSE",
+  "start_url": "/",
+  "id": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#4f46e5",
+  "orientation": "any",
+  "categories": ["education", "productivity"],
+  "icons": [
+    {
+      "src": "/pwa-192x192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/pwa-512x512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
