@@ -18,6 +18,43 @@ import { downloadTeacherMasterDoc } from './utils/exportUtils';
 import { getStoredApiKey } from './utils/apiKeyUtils';
 import { Download, Layers, Sparkles, CheckCircle2 } from 'lucide-react';
 
+async function safeFetchApi<T = any>(url: string, options: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, options);
+  } catch (netErr: any) {
+    throw new Error('Network connection issue. Please check your internet connection.');
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  const responseText = await response.text();
+
+  let data: any = null;
+  if (contentType.includes('application/json') || responseText.trim().startsWith('{') || responseText.trim().startsWith('[')) {
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      data = null;
+    }
+  }
+
+  if (!response.ok) {
+    if (data && data.error) {
+      throw new Error(data.error);
+    }
+    if (response.status === 429) {
+      throw new Error('Shared server rate limit reached. Click "Personal API Key" at top right to enter your free key.');
+    }
+    throw new Error(`Server notice (${response.status}). Please verify your connection or set a Personal API Key.`);
+  }
+
+  if (!data) {
+    throw new Error('Could not parse server response. Please try again.');
+  }
+
+  return data as T;
+}
+
 export default function App() {
   const [result, setResult] = useState<DiffusedResult | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -75,18 +112,11 @@ export default function App() {
         headers['x-gemini-api-key'] = apiKey;
       }
 
-      const response = await fetch('/api/diffuse', {
+      const data = await safeFetchApi('/api/diffuse', {
         method: 'POST',
         headers,
         body: JSON.stringify({ task, context, axis }),
       });
-
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || 'Failed to generate differentiated tasks.');
-      }
-
-      const data = await response.json();
 
       const newResult: DiffusedResult = {
         id: `diffuse_${Date.now()}`,
@@ -146,7 +176,7 @@ export default function App() {
         headers['x-gemini-api-key'] = apiKey;
       }
 
-      const response = await fetch('/api/mark', {
+      const feedbackData: MarkingFeedback = await safeFetchApi('/api/mark', {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -157,11 +187,6 @@ export default function App() {
         }),
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to mark student response.');
-      }
-
-      const feedbackData: MarkingFeedback = await response.json();
       setMarkingFeedbacks((prev) => ({
         ...prev,
         [index]: {
@@ -169,8 +194,9 @@ export default function App() {
           markedAt: new Date().toISOString(),
         },
       }));
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert(err.message || 'Could not mark response at this time.');
     } finally {
       setIsMarking((prev) => ({ ...prev, [index]: false }));
     }
