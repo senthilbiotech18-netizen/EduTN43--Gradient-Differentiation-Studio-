@@ -1,3 +1,5 @@
+import { validateGeminiApiKeyDirect } from './geminiClient';
+
 const API_KEY_STORAGE_KEY = 'edutn43_gemini_api_key';
 
 export function getStoredApiKey(): string {
@@ -29,19 +31,45 @@ export function removeStoredApiKey(): void {
 }
 
 export async function testGeminiApiKey(apiKey: string): Promise<{ valid: boolean; error?: string }> {
+  const cleanKey = apiKey.trim();
+  if (!cleanKey) {
+    return { valid: false, error: 'Please enter a Gemini API key.' };
+  }
+
+  // First try direct client-side validation against Gemini API (works on Vercel, static exports, and local host)
+  const directResult = await validateGeminiApiKeyDirect(cleanKey);
+  if (directResult.valid) {
+    return directResult;
+  }
+
+  // If direct validation returned an API key error (e.g., invalid key), return that
+  if (directResult.error && !directResult.error.toLowerCase().includes('network')) {
+    return directResult;
+  }
+
+  // Secondary fallback: try backend server route if available
   try {
     const res = await fetch('/api/test-key', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-gemini-api-key': apiKey.trim(),
+        'x-gemini-api-key': cleanKey,
       },
-      body: JSON.stringify({ apiKey: apiKey.trim() }),
+      body: JSON.stringify({ apiKey: cleanKey }),
     });
 
-    const data = await res.json();
+    const text = await res.text();
+    let data: any = {};
+    try {
+      data = JSON.parse(text);
+    } catch {
+      // If server returned non-JSON (e.g. Vercel 404 HTML), return directResult error
+      return directResult;
+    }
+
     return data;
   } catch (err: any) {
-    return { valid: false, error: err.message || 'Network error while testing key' };
+    return directResult;
   }
 }
+
