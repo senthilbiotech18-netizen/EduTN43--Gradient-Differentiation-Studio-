@@ -1,42 +1,50 @@
 import React, { useState } from 'react';
-import { DifferentiationAxis } from '../types';
+import { DifferentiationAxis, CurriculumType } from '../types';
 import { Sparkles, BookOpen, Layers, Lightbulb, GraduationCap, School, BookMarked } from 'lucide-react';
+import { CURRICULUM_CONFIGS, ALL_CURRICULA, getGradesForCurriculum } from '../utils/curriculumConfig';
 
 interface TaskInputPanelProps {
-  onGenerate: (task: string, context: string, axis: DifferentiationAxis) => void;
+  onGenerate: (task: string, context: string, axis: DifferentiationAxis, curriculum?: CurriculumType, gradeLevel?: string) => void;
   isLoading: boolean;
   statusMessage: string;
 }
 
-type CurriculumSystem = 'IB MYP' | 'Cambridge IGCSE';
-
 const SAMPLE_TASKS = [
   {
-    label: 'IB MYP 2 Biology: Cell Structure',
-    curriculum: 'IB MYP' as CurriculumSystem,
-    yearGroup: 'MYP 2',
+    label: 'IGCSE FM 4 History: Treaty Analysis',
+    curriculum: 'IGCSE' as CurriculumType,
+    gradeLevel: 'FM 4',
+    subject: 'History',
+    topic: 'World War I & Treaty of Versailles',
+    axis: 'product' as DifferentiationAxis,
+    task: 'Evaluate the reliability and limitations of political cartoons as historical evidence regarding the Treaty of Versailles.'
+  },
+  {
+    label: 'IBMYP MYP 3 Biology: Cell Transport',
+    curriculum: 'IBMYP' as CurriculumType,
+    gradeLevel: 'MYP 3',
     subject: 'Biology',
     topic: 'Cell Structure & Membrane Transport',
     axis: 'readiness' as DifferentiationAxis,
     task: 'Explain how the structure of a red blood cell relates to its function of transporting oxygen throughout the body.'
   },
   {
-    label: 'IGCSE FM4 History: Treaty of Versailles',
-    curriculum: 'Cambridge IGCSE' as CurriculumSystem,
-    yearGroup: 'FM4',
-    subject: 'History',
-    topic: 'World War I & Treaty Analysis',
-    axis: 'product' as DifferentiationAxis,
-    task: 'Evaluate the reliability and limitations of political cartoons as historical evidence regarding the Treaty of Versailles.'
+    label: 'ICSE Grade 9 Physics: Laws of Motion',
+    curriculum: 'ICSE' as CurriculumType,
+    gradeLevel: 'Grade 9',
+    subject: 'Physics',
+    topic: 'Newtonian Dynamics & Inertia',
+    axis: 'profile' as DifferentiationAxis,
+    task: 'Illustrate and explain the law of inertia using everyday transport scenarios like accelerating buses and sudden stops.'
   },
   {
-    label: 'IB MYP 4 English: Symbolism Analysis',
-    curriculum: 'IB MYP' as CurriculumSystem,
-    yearGroup: 'MYP 4',
-    subject: 'English Language & Literature',
-    topic: 'Dystopian Literature & Imagery',
-    axis: 'profile' as DifferentiationAxis,
-    task: 'Analyze how the author uses imagery and symbolism to develop the theme of isolation in Chapter 3.'
+    label: 'IBDP IBDP 1 Economics: Market Failure',
+    curriculum: 'IBDP' as CurriculumType,
+    gradeLevel: 'IBDP 1',
+    subject: 'Economics & Business Studies',
+    topic: 'Negative Externalities of Consumption',
+    axis: 'readiness' as DifferentiationAxis,
+    task: 'Analyze how indirect taxation can correct market failure caused by negative externalities of consumption.'
   }
 ];
 
@@ -65,8 +73,8 @@ export const TaskInputPanel: React.FC<TaskInputPanelProps> = ({
     'Explain how the structure of a red blood cell relates to its function of transporting oxygen.'
   );
   
-  const [curriculum, setCurriculum] = useState<CurriculumSystem>('IB MYP');
-  const [yearGroup, setYearGroup] = useState('MYP 2');
+  const [curriculum, setCurriculum] = useState<CurriculumType>('IGCSE');
+  const [gradeLevel, setGradeLevel] = useState<string>('FM 3');
   const [subject, setSubject] = useState('Biology');
   const [customSubject, setCustomSubject] = useState('');
   const [topic, setTopic] = useState('Cells & Membrane Transport');
@@ -78,19 +86,16 @@ export const TaskInputPanel: React.FC<TaskInputPanelProps> = ({
     product: 'Same learning goal assessed through three distinct student demonstration styles — structured written, visual model, or practical/spoken.'
   };
 
-  const handleCurriculumChange = (newCurriculum: CurriculumSystem) => {
+  const handleCurriculumChange = (newCurriculum: CurriculumType) => {
     setCurriculum(newCurriculum);
-    if (newCurriculum === 'IB MYP') {
-      setYearGroup('MYP 2');
-    } else {
-      setYearGroup('FM2');
-    }
+    const availableGrades = getGradesForCurriculum(newCurriculum);
+    setGradeLevel(availableGrades[Math.floor(availableGrades.length / 2)] || availableGrades[0]);
   };
 
   const handleSampleClick = (sample: typeof SAMPLE_TASKS[0]) => {
     setTask(sample.task);
     setCurriculum(sample.curriculum);
-    setYearGroup(sample.yearGroup);
+    setGradeLevel(sample.gradeLevel);
     setSubject(sample.subject);
     setTopic(sample.topic);
     setAxis(sample.axis);
@@ -101,10 +106,12 @@ export const TaskInputPanel: React.FC<TaskInputPanelProps> = ({
     if (!task.trim()) return;
 
     const activeSubject = subject === 'Other / Custom Subject' ? (customSubject.trim() || 'General Subject') : subject;
-    const formattedContext = `${curriculum} ${yearGroup} — ${activeSubject}${topic.trim() ? ` (${topic.trim()})` : ''}`;
+    const formattedContext = `${CURRICULUM_CONFIGS[curriculum]?.label || curriculum} [${gradeLevel}] — ${activeSubject}${topic.trim() ? ` (${topic.trim()})` : ''}`;
 
-    onGenerate(task.trim(), formattedContext, axis);
+    onGenerate(task.trim(), formattedContext, axis, curriculum, gradeLevel);
   };
+
+  const availableGrades = getGradesForCurriculum(curriculum);
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-7 shadow-sm mb-8 transition-all hover:border-indigo-200">
@@ -115,9 +122,9 @@ export const TaskInputPanel: React.FC<TaskInputPanelProps> = ({
           <div className="flex items-center justify-between mb-1.5">
             <label htmlFor="task-input" className="font-mono text-xs uppercase tracking-wider text-slate-700 font-semibold flex items-center gap-1.5">
               <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
-              Task, Question, or Reading Passage to Differentiate
+              Task, Question, or Prompt to Differentiate
             </label>
-            <span className="text-xs text-slate-500 font-mono">Input core material</span>
+            <span className="text-xs text-slate-500 font-mono">Curriculum Aligned Input</span>
           </div>
           <textarea
             id="task-input"
@@ -133,7 +140,7 @@ export const TaskInputPanel: React.FC<TaskInputPanelProps> = ({
         <div>
           <span className="text-xs font-mono text-slate-600 flex items-center gap-1 mb-2 font-medium">
             <Lightbulb className="w-3.5 h-3.5 text-purple-600" />
-            Try a quick classroom example:
+            Try a curriculum-specific classroom example:
           </span>
           <div className="flex flex-wrap gap-2">
             {SAMPLE_TASKS.map((sample, idx) => (
@@ -151,13 +158,13 @@ export const TaskInputPanel: React.FC<TaskInputPanelProps> = ({
 
         {/* Curriculum, Class Year & Subject Selection */}
         <div className="bg-slate-50/80 p-4 sm:p-5 rounded-2xl border border-slate-200/80 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-200/80 pb-2.5">
+          <div className="flex items-center justify-between border-b border-slate-200/80 pb-2.5 flex-wrap gap-2">
             <span className="font-mono text-xs uppercase tracking-wider text-indigo-900 font-bold flex items-center gap-1.5">
               <GraduationCap className="w-4 h-4 text-indigo-600" />
-              Class Level &amp; Curriculum Alignment
+              Curriculum &amp; Grade / Class Mapping
             </span>
-            <span className="text-[11px] font-mono text-slate-500 bg-slate-200/60 px-2.5 py-0.5 rounded-full">
-              Middle School &amp; High School Only (Max MYP 5 / FM 5)
+            <span className="text-[11px] font-mono text-indigo-700 bg-indigo-100/70 px-2.5 py-0.5 rounded-full font-medium">
+              {CURRICULUM_CONFIGS[curriculum]?.description}
             </span>
           </div>
 
@@ -166,51 +173,41 @@ export const TaskInputPanel: React.FC<TaskInputPanelProps> = ({
             {/* 1. Curriculum System */}
             <div>
               <label htmlFor="curriculum-select" className="font-mono text-xs text-slate-700 font-semibold block mb-1">
-                Curriculum Framework
+                Select Curriculum
               </label>
               <select
                 id="curriculum-select"
                 value={curriculum}
-                onChange={(e) => handleCurriculumChange(e.target.value as CurriculumSystem)}
-                className="w-full font-sans text-sm text-slate-900 bg-white border border-slate-200 rounded-xl p-2.5 focus:outline-2 focus:outline-indigo-600 transition-all cursor-pointer shadow-2xs font-medium"
+                onChange={(e) => handleCurriculumChange(e.target.value as CurriculumType)}
+                className="w-full font-sans text-sm text-slate-900 bg-white border border-slate-200 rounded-xl p-2.5 focus:outline-2 focus:outline-indigo-600 transition-all cursor-pointer shadow-2xs font-bold"
               >
-                <option value="IB MYP">IB MYP (Middle Years Programme)</option>
-                <option value="Cambridge IGCSE">Cambridge IGCSE</option>
+                <option value="IGCSE">IGCSE (Classes FM 1 to FM 5)</option>
+                <option value="IBMYP">IB MYP (Classes MYP 1 to MYP 5)</option>
+                <option value="ICSE">ICSE (Grades 1 to 10)</option>
+                <option value="IBDP">IBDP (Classes IBDP 1 &amp; IBDP 2)</option>
               </select>
             </div>
 
-            {/* 2. Year Group / Class */}
+            {/* 2. Grade / Class Level (Dynamic based on selected curriculum) */}
             <div>
-              <label htmlFor="yeargroup-select" className="font-mono text-xs text-slate-700 font-semibold block mb-1">
-                Class / Year Group Level
+              <label htmlFor="gradelevel-select" className="font-mono text-xs text-slate-700 font-semibold block mb-1">
+                Class / Grade Level ({curriculum})
               </label>
-              {curriculum === 'IB MYP' ? (
-                <select
-                  id="yeargroup-select"
-                  value={yearGroup}
-                  onChange={(e) => setYearGroup(e.target.value)}
-                  className="w-full font-sans text-sm text-slate-900 bg-white border border-slate-200 rounded-xl p-2.5 focus:outline-2 focus:outline-indigo-600 transition-all cursor-pointer shadow-2xs font-medium"
-                >
-                  <option value="MYP 1">MYP 1 (Grade 6 / Age 11-12)</option>
-                  <option value="MYP 2">MYP 2 (Grade 7 / Age 12-13)</option>
-                  <option value="MYP 3">MYP 3 (Grade 8 / Age 13-14)</option>
-                  <option value="MYP 4">MYP 4 (Grade 9 / Age 14-15)</option>
-                  <option value="MYP 5">MYP 5 (Grade 10 / Age 15-16 — Max MYP)</option>
-                </select>
-              ) : (
-                <select
-                  id="yeargroup-select"
-                  value={yearGroup}
-                  onChange={(e) => setYearGroup(e.target.value)}
-                  className="w-full font-sans text-sm text-slate-900 bg-white border border-slate-200 rounded-xl p-2.5 focus:outline-2 focus:outline-indigo-600 transition-all cursor-pointer shadow-2xs font-medium"
-                >
-                  <option value="FM1">FM1 (Year 7 / Stage 7)</option>
-                  <option value="FM2">FM2 (Year 8 / Stage 8)</option>
-                  <option value="FM3">FM3 (Year 9 / Stage 9)</option>
-                  <option value="FM4">FM4 (Year 10 / Stage 10)</option>
-                  <option value="FM5">FM5 (Year 11 / Stage 11 — Max IGCSE)</option>
-                </select>
-              )}
+              <select
+                id="gradelevel-select"
+                value={gradeLevel}
+                onChange={(e) => setGradeLevel(e.target.value)}
+                className="w-full font-sans text-sm text-slate-900 bg-white border border-slate-200 rounded-xl p-2.5 focus:outline-2 focus:outline-indigo-600 transition-all cursor-pointer shadow-2xs font-bold"
+              >
+                {availableGrades.map((grade) => (
+                  <option key={grade} value={grade}>
+                    {curriculum === 'IGCSE' && `${grade} (Cambridge Secondary)`}
+                    {curriculum === 'IBMYP' && `${grade} (IB Middle Years)`}
+                    {curriculum === 'ICSE' && `${grade} (CISCE Syllabus)`}
+                    {curriculum === 'IBDP' && `${grade} (IB Diploma Programme)`}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* 3. Subject Selection */}
@@ -244,13 +241,13 @@ export const TaskInputPanel: React.FC<TaskInputPanelProps> = ({
                 type="text"
                 value={customSubject}
                 onChange={(e) => setCustomSubject(e.target.value)}
-                placeholder="e.g. Design & Technology / Environmental Science"
+                placeholder="e.g. Design & Technology / Environmental Management"
                 className="w-full font-sans text-sm text-slate-900 bg-white border border-slate-200 rounded-xl p-2.5 focus:outline-2 focus:outline-indigo-600 transition-all shadow-2xs"
               />
             </div>
           )}
 
-          {/* Topic / Unit Focus */}
+          {/* Topic / Unit Focus & Differentiation Axis */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
             <div>
               <label htmlFor="topic-input" className="font-mono text-xs text-slate-700 font-semibold block mb-1">
@@ -288,6 +285,20 @@ export const TaskInputPanel: React.FC<TaskInputPanelProps> = ({
           <p className="font-mono text-xs text-slate-500 pt-1 leading-normal">
             {axisNotes[axis]}
           </p>
+
+          {/* Difficulty Tier Calibration Guide */}
+          <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center gap-2 text-[11px] font-mono">
+            <span className="text-slate-600 font-bold">Calibrated for {curriculum} ({gradeLevel}):</span>
+            <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md font-medium">
+              🟢 Support: Scaffolded steps &amp; essential sentence starters
+            </span>
+            <span className="bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded-md font-medium">
+              🔵 Core: Standard benchmark for {gradeLevel}
+            </span>
+            <span className="bg-purple-50 text-purple-800 border border-purple-200 px-2 py-0.5 rounded-md font-medium">
+              🟣 Extend: Deeper synthesis calibrated to {curriculum}
+            </span>
+          </div>
         </div>
 
         {/* Submit Button */}
@@ -300,11 +311,11 @@ export const TaskInputPanel: React.FC<TaskInputPanelProps> = ({
             {isLoading ? (
               <>
                 <Sparkles className="w-4 h-4 animate-spin" />
-                Diffusing Across Concentrated Lanes...
+                Diffusing for {curriculum} {gradeLevel}...
               </>
             ) : (
               <>
-                Diffuse This Task →
+                Diffuse This Task ({curriculum} • {gradeLevel}) →
               </>
             )}
           </button>
@@ -320,4 +331,5 @@ export const TaskInputPanel: React.FC<TaskInputPanelProps> = ({
     </div>
   );
 };
+
 

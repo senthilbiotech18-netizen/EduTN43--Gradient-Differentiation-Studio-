@@ -241,7 +241,7 @@ export function saveClassSubmission(submission: ClassSubmission): ClassSubmissio
 
 // Export class responses to CSV
 export function exportClassSubmissionsCsv(assignment: ClassAssignment, submissions: ClassSubmission[]): void {
-  const headers = ['Student Name', 'Student ID', 'Concentration Tier', 'Assessment Level', 'Submitted At', 'Strength', 'Next Step', 'Student Response'];
+  const headers = ['Student Name', 'Section / Grade', 'Student ID', 'Concentration Tier', 'Assessment Level', 'Submitted At', 'Strength', 'Next Step', 'Student Response'];
   
   const rows = submissions.map((s) => {
     const cleanAnswer = `"${(s.answerText || '').replace(/"/g, '""')}"`;
@@ -251,6 +251,7 @@ export function exportClassSubmissionsCsv(assignment: ClassAssignment, submissio
 
     return [
       `"${s.studentName || 'Anonymous'}"`,
+      `"${s.section || 'Unassigned'}"`,
       `"${s.studentId || ''}"`,
       `"${s.tier}"`,
       `"${s.feedback?.level || 'Pending / Unmarked'}"`,
@@ -272,7 +273,101 @@ export function exportClassSubmissionsCsv(assignment: ClassAssignment, submissio
   document.body.removeChild(link);
 }
 
-// Export full classroom master dossier in HTML .doc format
+// Export individual student longitudinal dossier (.doc format)
+export function exportStudentDossierDoc(
+  studentName: string,
+  studentSubmissions: ClassSubmission[],
+  assignments: ClassAssignment[]
+): void {
+  const assignMap = new Map<string, ClassAssignment>();
+  assignments.forEach((a) => assignMap.set(a.id, a));
+
+  const totalTasks = studentSubmissions.length;
+  const supportCount = studentSubmissions.filter((s) => s.tier === 'Support').length;
+  const coreCount = studentSubmissions.filter((s) => s.tier === 'Core').length;
+  const extendCount = studentSubmissions.filter((s) => s.tier === 'Extend').length;
+
+  const docHtml = `
+    <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+    <head>
+      <meta charset="utf-8">
+      <title>Student Differentiation Portfolio - ${studentName}</title>
+      <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #1e293b; padding: 28px; }
+        h1 { color: #1e1b4b; font-size: 24pt; margin-bottom: 4px; border-bottom: 3px solid #6366f1; padding-bottom: 8px; }
+        h2 { color: #312e81; font-size: 16pt; margin-top: 20pt; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; }
+        .meta-box { background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 14px; border-radius: 8px; margin-bottom: 16pt; }
+        .stats-grid { display: flex; gap: 12px; margin-bottom: 16pt; }
+        .stat-card { background: #eef2ff; border: 1px solid #c7d2fe; padding: 10px 16px; border-radius: 6px; font-weight: bold; }
+        .task-card { background: #ffffff; border: 1px solid #e2e8f0; padding: 14px; margin-bottom: 14pt; border-left: 5px solid #6366f1; border-radius: 6px; }
+        .badge { display: inline-block; padding: 3px 10px; font-size: 9pt; font-weight: bold; border-radius: 4px; color: #fff; }
+        .badge-Support { background-color: #2563eb; }
+        .badge-Core { background-color: #4f46e5; }
+        .badge-Extend { background-color: #7e22ce; }
+        .feedback-box { background: #f1f5f9; border: 1px solid #cbd5e1; padding: 10px; border-radius: 6px; margin-top: 8pt; }
+      </style>
+    </head>
+    <body>
+      <h1>EduTN43 Gradient: Student Differentiation Dossier</h1>
+      <div class="meta-box">
+        <p><strong>Student Name:</strong> ${studentName}</p>
+        <p><strong>Total Differentiated Tasks Completed:</strong> ${totalTasks}</p>
+        <p><strong>Report Generated:</strong> ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}</p>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">Total Completed: ${totalTasks}</div>
+        <div class="stat-card">Support Tier: ${supportCount} (${totalTasks > 0 ? Math.round((supportCount / totalTasks) * 100) : 0}%)</div>
+        <div class="stat-card">Core Tier: ${coreCount} (${totalTasks > 0 ? Math.round((coreCount / totalTasks) * 100) : 0}%)</div>
+        <div class="stat-card">Extend Tier: ${extendCount} (${totalTasks > 0 ? Math.round((extendCount / totalTasks) * 100) : 0}%)</div>
+      </div>
+
+      <h2>Chronological Differentiated Learning History</h2>
+      ${
+        studentSubmissions.length === 0
+          ? '<p><em>No differentiated task submissions recorded for this student.</em></p>'
+          : studentSubmissions
+              .map((sub, i) => {
+                const assign = assignMap.get(sub.assignmentId);
+                return `
+          <div class="task-card">
+            <h3>${i + 1}. ${assign?.title || 'Class Assignment'} <span class="badge badge-${sub.tier}">${sub.tier} Tier</span></h3>
+            <p><strong>Teacher:</strong> ${assign?.teacherName || 'Instructor'} | <strong>Class/Year:</strong> ${assign?.context || 'Secondary'}</p>
+            <p><strong>Date Completed:</strong> ${new Date(sub.submittedAt).toLocaleString()}</p>
+            <p><strong>Core Prompt:</strong> "${assign?.originalTask || 'Differentiated Lesson Task'}"</p>
+            <p><strong>Student Work:</strong><br/><em>${(sub.answerText || '').replace(/\n/g, '<br/>')}</em></p>
+            ${
+              sub.feedback
+                ? `
+              <div class="feedback-box">
+                <p><strong>Assessment Level:</strong> <strong>${sub.feedback.level}</strong></p>
+                <p><strong>Demonstrated Strength:</strong> ${sub.feedback.strength}</p>
+                <p><strong>Next Step for Growth:</strong> ${sub.feedback.next_step}</p>
+                ${sub.feedback.detailed_feedback ? `<p><strong>Commentary:</strong> "${sub.feedback.detailed_feedback}"</p>` : ''}
+              </div>
+            `
+                : ''
+            }
+          </div>
+        `;
+              })
+              .join('')
+      }
+    </body>
+    </html>
+  `;
+
+  const blob = new Blob(['\ufeff' + docHtml], { type: 'application/msword' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  const cleanName = studentName.replace(/\s+/g, '_');
+  link.setAttribute('download', `Student_Differentiation_Dossier_${cleanName}_${new Date().toISOString().slice(0, 10)}.doc`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 export function exportClassMasterDoc(assignment: ClassAssignment, submissions: ClassSubmission[]): void {
   const supportCount = submissions.filter((s) => s.tier === 'Support').length;
   const coreCount = submissions.filter((s) => s.tier === 'Core').length;

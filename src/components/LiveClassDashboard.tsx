@@ -1,13 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ClassAssignment, ClassSubmission, TierType } from '../types';
 import { 
   getAllAssignments, 
   getAllAssignmentsAsync,
   getSubmissionsForAssignment, 
+  getAllSubmissions,
   fetchRemoteSubmissions,
   subscribeToClassUpdates,
   exportClassSubmissionsCsv,
   exportClassMasterDoc,
+  exportStudentDossierDoc,
   deleteClassAssignment
 } from '../utils/classAssignmentStorage';
 import { 
@@ -30,7 +32,13 @@ import {
   BarChart3,
   RefreshCw,
   Eye,
-  X
+  X,
+  GraduationCap,
+  FolderOpen,
+  UserCheck,
+  Calendar,
+  BookOpen,
+  Share2
 } from 'lucide-react';
 
 interface LiveClassDashboardProps {
@@ -44,19 +52,31 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
   onBackToStudio,
   onOpenStudentView,
 }) => {
+  const [activeTab, setActiveTab] = useState<'assignments' | 'student_tracker'>('assignments');
   const [assignments, setAssignments] = useState<ClassAssignment[]>([]);
   const [activeAssignment, setActiveAssignment] = useState<ClassAssignment | null>(null);
   const [submissions, setSubmissions] = useState<ClassSubmission[]>([]);
+  const [allSubmissions, setAllSubmissions] = useState<ClassSubmission[]>([]);
   const [tierFilter, setTierFilter] = useState<'All' | TierType>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
+  const [copiedStudentLink, setCopiedStudentLink] = useState<boolean>(false);
   const [activeDetailSubmission, setActiveDetailSubmission] = useState<ClassSubmission | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState<string>(new Date().toLocaleTimeString());
+
+  // Student Tracker specific filters
+  const [selectedTeacherFilter, setSelectedTeacherFilter] = useState<string>('All');
+  const [selectedClassFilter, setSelectedClassFilter] = useState<string>('All');
+  const [selectedStudentName, setSelectedStudentName] = useState<string>('');
+  const [studentSearchQuery, setStudentSearchQuery] = useState<string>('');
 
   const refreshData = async () => {
     // 1. Fetch live assignments from backend server
     const all = await getAllAssignmentsAsync();
     setAssignments(all);
+
+    const allSubs = getAllSubmissions();
+    setAllSubmissions(allSubs);
 
     let current = activeAssignment;
     if (selectedAssignmentId) {
@@ -106,6 +126,16 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
     setTimeout(() => setCopiedCode(false), 2500);
   };
 
+  const handleCopyDirectStudentLink = (code: string) => {
+    if (typeof window !== 'undefined') {
+      const origin = window.location.origin + window.location.pathname;
+      const url = `${origin}?code=${code}&mode=student`;
+      navigator.clipboard.writeText(url);
+      setCopiedStudentLink(true);
+      setTimeout(() => setCopiedStudentLink(false), 2500);
+    }
+  };
+
   const handleDelete = (id: string) => {
     if (confirm('Are you sure you want to delete this assignment and all associated student submissions?')) {
       deleteClassAssignment(id);
@@ -113,7 +143,7 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
     }
   };
 
-  // Filter submissions
+  // Filter submissions for current assignment
   const filteredSubmissions = submissions.filter((sub) => {
     const matchesTier = tierFilter === 'All' || sub.tier === tierFilter;
     const matchesSearch = 
@@ -123,7 +153,7 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
     return matchesTier && matchesSearch;
   });
 
-  // Calculate statistics
+  // Calculate statistics for active assignment
   const supportCount = submissions.filter((s) => s.tier === 'Support').length;
   const coreCount = submissions.filter((s) => s.tier === 'Core').length;
   const extendCount = submissions.filter((s) => s.tier === 'Extend').length;
@@ -135,6 +165,98 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
   const beginningCount = submissions.filter((s) => s.feedback?.level === 'Beginning').length;
 
   const tierPercent = (count: number) => (totalCount > 0 ? Math.round((count / totalCount) * 100) : 0);
+
+  // Student Tracker Aggregated Data
+  const teacherList = useMemo(() => {
+    const set = new Set<string>();
+    assignments.forEach((a) => {
+      if (a.teacherName) set.add(a.teacherName.trim());
+    });
+    return Array.from(set);
+  }, [assignments]);
+
+  const classList = useMemo(() => {
+    const set = new Set<string>();
+    assignments.forEach((a) => {
+      if (a.context) set.add(a.context.trim());
+    });
+    return Array.from(set);
+  }, [assignments]);
+
+  // Map assignments for quick metadata lookup
+  const assignmentLookup = useMemo(() => {
+    const map = new Map<string, ClassAssignment>();
+    assignments.forEach((a) => map.set(a.id, a));
+    return map;
+  }, [assignments]);
+
+  // Aggregate submissions by Student Name
+  const studentProfiles = useMemo(() => {
+    const map = new Map<string, {
+      name: string;
+      studentId?: string;
+      submissions: ClassSubmission[];
+      teachers: Set<string>;
+      classes: Set<string>;
+      supportCount: number;
+      coreCount: number;
+      extendCount: number;
+      lastActive: string;
+    }>();
+
+    allSubmissions.forEach((sub) => {
+      const studentKey = (sub.studentName || 'Anonymous Student').trim();
+      const assign = assignmentLookup.get(sub.assignmentId);
+
+      // Check Teacher filter
+      if (selectedTeacherFilter !== 'All' && assign && assign.teacherName.trim() !== selectedTeacherFilter) {
+        return;
+      }
+      // Check Class filter
+      if (selectedClassFilter !== 'All' && assign && assign.context.trim() !== selectedClassFilter) {
+        return;
+      }
+
+      if (!map.has(studentKey)) {
+        map.set(studentKey, {
+          name: studentKey,
+          studentId: sub.studentId,
+          submissions: [],
+          teachers: new Set(),
+          classes: new Set(),
+          supportCount: 0,
+          coreCount: 0,
+          extendCount: 0,
+          lastActive: sub.submittedAt,
+        });
+      }
+
+      const profile = map.get(studentKey)!;
+      profile.submissions.push(sub);
+      if (assign?.teacherName) profile.teachers.add(assign.teacherName);
+      if (assign?.context) profile.classes.add(assign.context);
+      if (sub.tier === 'Support') profile.supportCount++;
+      if (sub.tier === 'Core') profile.coreCount++;
+      if (sub.tier === 'Extend') profile.extendCount++;
+      if (new Date(sub.submittedAt) > new Date(profile.lastActive)) {
+        profile.lastActive = sub.submittedAt;
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => b.submissions.length - a.submissions.length);
+  }, [allSubmissions, assignmentLookup, selectedTeacherFilter, selectedClassFilter]);
+
+  const filteredStudentProfiles = useMemo(() => {
+    return studentProfiles.filter((p) => 
+      p.name.toLowerCase().includes(studentSearchQuery.toLowerCase()) ||
+      (p.studentId && p.studentId.toLowerCase().includes(studentSearchQuery.toLowerCase()))
+    );
+  }, [studentProfiles, studentSearchQuery]);
+
+  const selectedStudentProfile = useMemo(() => {
+    if (!selectedStudentName) return filteredStudentProfiles[0] || null;
+    return studentProfiles.find((p) => p.name === selectedStudentName) || filteredStudentProfiles[0] || null;
+  }, [selectedStudentName, studentProfiles, filteredStudentProfiles]);
 
   const getTierBadge = (tier: TierType) => {
     switch (tier) {
@@ -185,12 +307,40 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
               </span>
             </div>
             <h2 className="font-sans font-bold text-2xl text-slate-900 leading-tight">
-              Whole-Class Assigned Tasks &amp; Live Submissions
+              {activeTab === 'assignments' 
+                ? 'Whole-Class Assigned Tasks & Live Submissions' 
+                : 'Student Differentiation Portfolio & Tracking Records'}
             </h2>
           </div>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Tab Switcher */}
+          <div className="inline-flex bg-slate-100 p-1 rounded-xl font-mono text-xs font-semibold">
+            <button
+              onClick={() => setActiveTab('assignments')}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg transition-all cursor-pointer ${
+                activeTab === 'assignments'
+                  ? 'bg-white text-indigo-900 shadow-2xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              Live Task Views ({assignments.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('student_tracker')}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg transition-all cursor-pointer ${
+                activeTab === 'student_tracker'
+                  ? 'bg-white text-indigo-900 shadow-2xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <GraduationCap className="w-3.5 h-3.5" />
+              Student Portfolios ({studentProfiles.length})
+            </button>
+          </div>
+
           <button
             onClick={refreshData}
             className="inline-flex items-center gap-1.5 font-mono text-xs text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-xl transition-all cursor-pointer"
@@ -199,7 +349,7 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
             Refresh
           </button>
 
-          {activeAssignment && (
+          {activeAssignment && activeTab === 'assignments' && (
             <button
               onClick={() => onOpenStudentView(activeAssignment.code)}
               className="inline-flex items-center gap-1.5 font-sans font-semibold text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 px-3.5 py-2 rounded-xl transition-all cursor-pointer shadow-2xs"
@@ -219,373 +369,758 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
         </div>
       </div>
 
-      {assignments.length === 0 ? (
-        <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center space-y-4">
-          <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto">
-            <Users className="w-7 h-7" />
-          </div>
-          <h3 className="font-sans font-bold text-xl text-slate-900">
-            No Class Assignments Published Yet
-          </h3>
-          <p className="font-serif text-sm text-slate-600 max-w-md mx-auto">
-            Create a differentiated task in the Studio, then click <strong>"Assign to Whole Class"</strong> to generate a join code for all your students.
-          </p>
-          <button
-            onClick={onBackToStudio}
-            className="inline-flex items-center gap-2 font-sans font-bold text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl shadow-sm transition-all cursor-pointer"
-          >
-            Go to Task Diffuser Studio →
-          </button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          
-          {/* Left Sidebar: Assignment Selector List */}
-          <div className="lg:col-span-1 space-y-3">
-            <h3 className="font-mono text-xs uppercase tracking-wider text-slate-600 font-bold px-1 flex items-center justify-between">
-              <span>Active Assignments ({assignments.length})</span>
-            </h3>
-
-            <div className="space-y-2">
-              {assignments.map((assign) => {
-                const isSelected = activeAssignment?.id === assign.id;
-                const assignSubs = getSubmissionsForAssignment(assign.id);
-
-                return (
-                  <div
-                    key={assign.id}
-                    onClick={() => handleSelectAssignment(assign)}
-                    className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col gap-1.5 ${
-                      isSelected
-                        ? 'bg-indigo-50/90 border-indigo-300 shadow-xs ring-1 ring-indigo-400'
-                        : 'bg-white border-slate-200 hover:border-indigo-200 hover:bg-slate-50/70'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-[11px] font-extrabold bg-indigo-600 text-white px-2 py-0.5 rounded-md tracking-wider">
-                        {assign.code}
-                      </span>
-                      <span className="font-mono text-[11px] text-slate-500">
-                        {assignSubs.length} response{assignSubs.length === 1 ? '' : 's'}
-                      </span>
-                    </div>
-
-                    <h4 className="font-sans font-bold text-sm text-slate-900 line-clamp-1">
-                      {assign.title}
-                    </h4>
-
-                    <span className="font-mono text-[10px] text-slate-500 line-clamp-1">
-                      {assign.context}
-                    </span>
-                  </div>
-                );
-              })}
+      {/* VIEW MODE 1: ASSIGNMENTS / LIVE PIN VIEW */}
+      {activeTab === 'assignments' && (
+        <>
+          {assignments.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center space-y-4">
+              <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto">
+                <Users className="w-7 h-7" />
+              </div>
+              <h3 className="font-sans font-bold text-xl text-slate-900">
+                No Class Assignments Published Yet
+              </h3>
+              <p className="font-serif text-sm text-slate-600 max-w-md mx-auto">
+                Create a differentiated task in the Studio, then click <strong>"Assign to Whole Class"</strong> to generate a join code for all your students.
+              </p>
+              <button
+                onClick={onBackToStudio}
+                className="inline-flex items-center gap-2 font-sans font-bold text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl shadow-sm transition-all cursor-pointer"
+              >
+                Go to Task Diffuser Studio →
+              </button>
             </div>
-          </div>
-
-          {/* Right Main Area: Active Assignment Statistics & Student Submissions Grid */}
-          {activeAssignment && (
-            <div className="lg:col-span-3 space-y-6">
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
               
-              {/* Active Assignment Header Card */}
-              <div className="bg-gradient-to-br from-indigo-900 via-indigo-800 to-purple-900 text-white p-6 rounded-3xl shadow-sm relative overflow-hidden">
-                <div 
-                  className="absolute inset-0 opacity-10"
-                  style={{
-                    backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.8) 1.5px, transparent 1.5px)',
-                    backgroundSize: '16px 16px'
-                  }}
-                />
+              {/* Left Sidebar: Assignment Selector List */}
+              <div className="lg:col-span-1 space-y-3">
+                <h3 className="font-mono text-xs uppercase tracking-wider text-slate-600 font-bold px-1 flex items-center justify-between">
+                  <span>Active Assignments ({assignments.length})</span>
+                </h3>
 
-                <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-xs bg-white/20 px-2.5 py-0.5 rounded-full backdrop-blur-xs font-semibold">
-                        {activeAssignment.context}
-                      </span>
-                      <span className="font-mono text-xs bg-purple-400/30 text-purple-200 px-2.5 py-0.5 rounded-full font-medium">
-                        {activeAssignment.axis.toUpperCase()} DIFFERENTIATION
-                      </span>
-                    </div>
+                <div className="space-y-2">
+                  {assignments.map((assign) => {
+                    const isSelected = activeAssignment?.id === assign.id;
+                    const assignSubs = getSubmissionsForAssignment(assign.id);
 
-                    <h3 className="font-sans font-extrabold text-2xl sm:text-3xl text-white tracking-tight">
-                      {activeAssignment.title}
-                    </h3>
-                    <p className="text-indigo-100 text-xs font-serif italic max-w-xl line-clamp-2">
-                      "{activeAssignment.originalTask}"
-                    </p>
-                  </div>
-
-                  {/* Class PIN Badge & Action */}
-                  <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl text-center shrink-0 min-w-[180px]">
-                    <span className="font-mono text-[10px] uppercase tracking-widest text-indigo-200 font-bold block mb-0.5">
-                      Student Join PIN
-                    </span>
-                    <div className="font-mono font-extrabold text-3xl text-white tracking-wider mb-2">
-                      {activeAssignment.code}
-                    </div>
-                    <button
-                      onClick={() => handleCopyCode(activeAssignment.code)}
-                      className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold bg-white text-indigo-900 hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-xs w-full justify-center"
-                    >
-                      {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      {copiedCode ? 'PIN Copied!' : 'Copy PIN for Students'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Real-time Analytics Cards */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                
-                {/* Total Submissions */}
-                <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-2xs">
-                  <span className="font-mono text-[11px] uppercase tracking-wider text-slate-500 font-bold block mb-1">
-                    Total Submissions
-                  </span>
-                  <div className="font-sans font-extrabold text-3xl text-slate-900">
-                    {totalCount}
-                  </div>
-                  <span className="font-mono text-[11px] text-slate-500">
-                    Students responded
-                  </span>
-                </div>
-
-                {/* Support Tier Concentration */}
-                <div className="bg-blue-50/70 border border-blue-200 p-4 rounded-2xl shadow-2xs">
-                  <span className="font-mono text-[11px] uppercase tracking-wider text-blue-700 font-bold block mb-1">
-                    Support Tier
-                  </span>
-                  <div className="font-sans font-extrabold text-3xl text-blue-900">
-                    {supportCount} <span className="text-sm font-medium text-blue-600">({tierPercent(supportCount)}%)</span>
-                  </div>
-                  <span className="font-mono text-[11px] text-blue-700">
-                    Guided scaffolds
-                  </span>
-                </div>
-
-                {/* Core Tier Concentration */}
-                <div className="bg-indigo-50/70 border border-indigo-200 p-4 rounded-2xl shadow-2xs">
-                  <span className="font-mono text-[11px] uppercase tracking-wider text-indigo-700 font-bold block mb-1">
-                    Core Tier
-                  </span>
-                  <div className="font-sans font-extrabold text-3xl text-indigo-900">
-                    {coreCount} <span className="text-sm font-medium text-indigo-600">({tierPercent(coreCount)}%)</span>
-                  </div>
-                  <span className="font-mono text-[11px] text-indigo-700">
-                    Standard objective
-                  </span>
-                </div>
-
-                {/* Extend Tier Concentration */}
-                <div className="bg-purple-50/70 border border-purple-200 p-4 rounded-2xl shadow-2xs">
-                  <span className="font-mono text-[11px] uppercase tracking-wider text-purple-700 font-bold block mb-1">
-                    Extend Tier
-                  </span>
-                  <div className="font-sans font-extrabold text-3xl text-purple-900">
-                    {extendCount} <span className="text-sm font-medium text-purple-600">({tierPercent(extendCount)}%)</span>
-                  </div>
-                  <span className="font-mono text-[11px] text-purple-700">
-                    Advanced inquiry
-                  </span>
-                </div>
-              </div>
-
-              {/* Concentration Distribution Visual Bar */}
-              {totalCount > 0 && (
-                <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-2xs space-y-2">
-                  <div className="flex items-center justify-between text-xs font-mono font-semibold text-slate-700">
-                    <span className="flex items-center gap-1.5">
-                      <BarChart3 className="w-3.5 h-3.5 text-indigo-600" />
-                      Live Concentration Breakdown
-                    </span>
-                    <span>
-                      {excellingCount} Excelling · {secureCount} Secure · {developingCount} Developing · {beginningCount} Beginning
-                    </span>
-                  </div>
-
-                  <div className="h-4 bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
-                    <div 
-                      style={{ width: `${tierPercent(supportCount)}%` }} 
-                      className="bg-blue-600 transition-all duration-500" 
-                      title={`Support: ${supportCount} (${tierPercent(supportCount)}%)`}
-                    />
-                    <div 
-                      style={{ width: `${tierPercent(coreCount)}%` }} 
-                      className="bg-indigo-600 transition-all duration-500" 
-                      title={`Core: ${coreCount} (${tierPercent(coreCount)}%)`}
-                    />
-                    <div 
-                      style={{ width: `${tierPercent(extendCount)}%` }} 
-                      className="bg-purple-700 transition-all duration-500" 
-                      title={`Extend: ${extendCount} (${tierPercent(extendCount)}%)`}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between text-[11px] font-mono text-slate-500">
-                    <span className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-blue-600" /> Support ({supportCount})
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-indigo-600" /> Core ({coreCount})
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-purple-700" /> Extend ({extendCount})
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* Submissions Section */}
-              <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-5">
-                
-                {/* Search, Filter & Export Action Bar */}
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {/* Tier Filters */}
-                    <div className="inline-flex bg-slate-100 p-1 rounded-xl font-mono text-xs font-semibold">
-                      {(['All', 'Support', 'Core', 'Extend'] as const).map((tier) => (
-                        <button
-                          key={tier}
-                          onClick={() => setTierFilter(tier)}
-                          className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                            tierFilter === tier
-                              ? 'bg-white text-slate-900 shadow-2xs'
-                              : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          {tier}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Search Input */}
-                    <div className="relative">
-                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="text"
-                        placeholder="Search student or response..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-8 pr-3 py-1.5 text-xs font-sans bg-slate-50 border border-slate-200 rounded-xl focus:outline-2 focus:outline-indigo-600 focus:bg-white transition-all w-48 sm:w-60"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Export Buttons */}
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => exportClassSubmissionsCsv(activeAssignment, submissions)}
-                      disabled={submissions.length === 0}
-                      className="inline-flex items-center gap-1.5 font-sans font-semibold text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3.5 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-40"
-                    >
-                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-                      Export CSV Roster
-                    </button>
-
-                    <button
-                      onClick={() => exportClassMasterDoc(activeAssignment, submissions)}
-                      disabled={submissions.length === 0}
-                      className="inline-flex items-center gap-1.5 font-sans font-semibold text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 px-3.5 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-40"
-                    >
-                      <Download className="w-3.5 h-3.5 text-indigo-600" />
-                      Class Master Report (.doc)
-                    </button>
-
-                    <button
-                      onClick={() => handleDelete(activeAssignment.id)}
-                      className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all cursor-pointer"
-                      title="Delete assignment and submissions"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Submissions Roster List */}
-                {filteredSubmissions.length === 0 ? (
-                  <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-100 space-y-2">
-                    <p className="font-sans font-semibold text-sm text-slate-700">
-                      {submissions.length === 0
-                        ? 'No student submissions received yet for this task.'
-                        : 'No submissions match your search or filter criteria.'}
-                    </p>
-                    <p className="font-serif text-xs text-slate-500">
-                      Have students open the Student Portal and enter PIN: <strong>{activeAssignment.code}</strong>
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {filteredSubmissions.map((sub, idx) => (
+                    return (
                       <div
-                        key={sub.id}
-                        className="bg-slate-50/70 hover:bg-white border border-slate-200 rounded-2xl p-4 transition-all shadow-2xs hover:shadow-xs space-y-3"
+                        key={assign.id}
+                        onClick={() => handleSelectAssignment(assign)}
+                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col gap-1.5 ${
+                          isSelected
+                            ? 'bg-indigo-50/90 border-indigo-300 shadow-xs ring-1 ring-indigo-400'
+                            : 'bg-white border-slate-200 hover:border-indigo-200 hover:bg-slate-50/70'
+                        }`}
                       >
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                          <div className="flex items-center gap-2.5 flex-wrap">
-                            <span className="font-mono text-xs font-bold text-slate-400">
-                              #{idx + 1}
-                            </span>
-                            <span className="font-sans font-bold text-base text-slate-900">
-                              {sub.studentName || 'Anonymous Student'}
-                            </span>
-                            {sub.studentId && (
-                              <span className="font-mono text-[11px] text-slate-500 bg-slate-200/60 px-2 py-0.5 rounded-md">
-                                ID: {sub.studentId}
-                              </span>
-                            )}
-                            <span className={`font-mono text-xs px-2.5 py-0.5 rounded-full border font-bold ${getTierBadge(sub.tier)}`}>
-                              {sub.tier} Concentration
-                            </span>
-                            {sub.feedback?.level && (
-                              <span className={`font-mono text-xs px-2.5 py-0.5 rounded-full border font-bold ${getLevelBadge(sub.feedback.level)}`}>
-                                {sub.feedback.level}
-                              </span>
-                            )}
-                          </div>
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-[11px] font-extrabold bg-indigo-600 text-white px-2 py-0.5 rounded-md tracking-wider">
+                            {assign.code}
+                          </span>
+                          <span className="font-mono text-[11px] text-slate-500">
+                            {assignSubs.length} response{assignSubs.length === 1 ? '' : 's'}
+                          </span>
+                        </div>
 
-                          <div className="flex items-center gap-3 text-xs font-mono text-slate-500">
-                            <span className="flex items-center gap-1">
-                              <Clock className="w-3.5 h-3.5" />
-                              {new Date(sub.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        <h4 className="font-sans font-bold text-sm text-slate-900 line-clamp-1">
+                          {assign.title}
+                        </h4>
+
+                        <div className="flex items-center justify-between text-[10px] font-mono text-slate-500">
+                          <span className="line-clamp-1">{assign.teacherName || 'Instructor'}</span>
+                          <span className="line-clamp-1 font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
+                            {assign.curriculum ? `${assign.curriculum} (${assign.gradeLevel || 'Standard'})` : assign.context}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Right Main Area: Active Assignment Statistics & Student Submissions Grid */}
+              {activeAssignment && (
+                <div className="lg:col-span-3 space-y-6">
+                  
+                  {/* Active Assignment Header Card */}
+                  <div className="bg-gradient-to-br from-indigo-900 via-indigo-800 to-purple-900 text-white p-6 rounded-3xl shadow-sm relative overflow-hidden">
+                    <div 
+                      className="absolute inset-0 opacity-10"
+                      style={{
+                        backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.8) 1.5px, transparent 1.5px)',
+                        backgroundSize: '16px 16px'
+                      }}
+                    />
+
+                    <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-xs bg-white/20 px-2.5 py-0.5 rounded-full backdrop-blur-xs font-semibold">
+                            Teacher: {activeAssignment.teacherName || 'Instructor'}
+                          </span>
+                          {activeAssignment.curriculum && (
+                            <span className="font-mono text-xs bg-indigo-500/50 text-white border border-white/30 px-2.5 py-0.5 rounded-full font-bold">
+                              {activeAssignment.curriculum} • {activeAssignment.gradeLevel || 'Standard'}
                             </span>
-                            <button
-                              onClick={() => setActiveDetailSubmission(sub)}
-                              className="inline-flex items-center gap-1 font-sans font-semibold text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                              Review Feedback
-                            </button>
+                          )}
+                          <span className="font-mono text-xs bg-white/20 px-2.5 py-0.5 rounded-full backdrop-blur-xs font-semibold">
+                            Unit: {activeAssignment.context}
+                          </span>
+                          <span className="font-mono text-xs bg-purple-400/30 text-purple-200 px-2.5 py-0.5 rounded-full font-medium">
+                            {activeAssignment.axis.toUpperCase()} DIFFERENTIATION
+                          </span>
+                        </div>
+
+                        <h3 className="font-sans font-extrabold text-2xl sm:text-3xl text-white tracking-tight">
+                          {activeAssignment.title}
+                        </h3>
+                        <p className="text-indigo-100 text-xs font-serif italic max-w-xl line-clamp-2">
+                          "{activeAssignment.originalTask}"
+                        </p>
+                      </div>
+
+                      {/* Class PIN Badge & Action */}
+                      <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl text-center shrink-0 min-w-[210px] space-y-2">
+                        <div>
+                          <span className="font-mono text-[10px] uppercase tracking-widest text-indigo-200 font-bold block mb-0.5">
+                            Student Join PIN
+                          </span>
+                          <div className="font-mono font-extrabold text-3xl text-white tracking-wider">
+                            {activeAssignment.code}
                           </div>
                         </div>
 
-                        {/* Student Response Snippet */}
-                        <p className="font-serif text-sm text-slate-800 bg-white p-3 rounded-xl border border-slate-200/80 leading-relaxed">
-                          {sub.answerText}
-                        </p>
+                        <div className="flex flex-col gap-1.5 pt-1">
+                          <button
+                            onClick={() => handleCopyCode(activeAssignment.code)}
+                            className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold bg-white text-indigo-900 hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-xs w-full justify-center"
+                          >
+                            {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                            {copiedCode ? 'PIN Copied!' : 'Copy PIN'}
+                          </button>
 
-                        {/* Formative Strength & Next Step Snippet */}
-                        {sub.feedback && (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs font-serif">
-                            <div className="bg-emerald-50/60 border border-emerald-200/60 p-2.5 rounded-lg text-emerald-950">
-                              <span className="font-mono text-[10px] uppercase font-bold text-emerald-700 block">
-                                Strength
-                              </span>
-                              {sub.feedback.strength}
-                            </div>
-                            <div className="bg-indigo-50/60 border border-indigo-200/60 p-2.5 rounded-lg text-indigo-950">
-                              <span className="font-mono text-[10px] uppercase font-bold text-indigo-700 block">
-                                Growth Next Step
-                              </span>
-                              {sub.feedback.next_step}
-                            </div>
-                          </div>
-                        )}
+                          <button
+                            onClick={() => handleCopyDirectStudentLink(activeAssignment.code)}
+                            className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold bg-indigo-500/80 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-xs w-full justify-center border border-indigo-400/40"
+                          >
+                            {copiedStudentLink ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Share2 className="w-3.5 h-3.5" />}
+                            {copiedStudentLink ? 'Direct Link Copied!' : 'Copy Student Link (Isolated)'}
+                          </button>
+                        </div>
                       </div>
-                    ))}
+                    </div>
                   </div>
-                )}
+
+                  {/* Real-time Analytics Cards */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    
+                    {/* Total Submissions */}
+                    <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-2xs">
+                      <span className="font-mono text-[11px] uppercase tracking-wider text-slate-500 font-bold block mb-1">
+                        Total Submissions
+                      </span>
+                      <div className="font-sans font-extrabold text-3xl text-slate-900">
+                        {totalCount}
+                      </div>
+                      <span className="font-mono text-[11px] text-slate-500">
+                        Students responded
+                      </span>
+                    </div>
+
+                    {/* Support Tier Concentration */}
+                    <div className="bg-blue-50/70 border border-blue-200 p-4 rounded-2xl shadow-2xs">
+                      <span className="font-mono text-[11px] uppercase tracking-wider text-blue-700 font-bold block mb-1">
+                        Support Tier
+                      </span>
+                      <div className="font-sans font-extrabold text-3xl text-blue-900">
+                        {supportCount} <span className="text-sm font-medium text-blue-600">({tierPercent(supportCount)}%)</span>
+                      </div>
+                      <span className="font-mono text-[11px] text-blue-700">
+                        Guided scaffolds
+                      </span>
+                    </div>
+
+                    {/* Core Tier Concentration */}
+                    <div className="bg-indigo-50/70 border border-indigo-200 p-4 rounded-2xl shadow-2xs">
+                      <span className="font-mono text-[11px] uppercase tracking-wider text-indigo-700 font-bold block mb-1">
+                        Core Tier
+                      </span>
+                      <div className="font-sans font-extrabold text-3xl text-indigo-900">
+                        {coreCount} <span className="text-sm font-medium text-indigo-600">({tierPercent(coreCount)}%)</span>
+                      </div>
+                      <span className="font-mono text-[11px] text-indigo-700">
+                        Standard objective
+                      </span>
+                    </div>
+
+                    {/* Extend Tier Concentration */}
+                    <div className="bg-purple-50/70 border border-purple-200 p-4 rounded-2xl shadow-2xs">
+                      <span className="font-mono text-[11px] uppercase tracking-wider text-purple-700 font-bold block mb-1">
+                        Extend Tier
+                      </span>
+                      <div className="font-sans font-extrabold text-3xl text-purple-900">
+                        {extendCount} <span className="text-sm font-medium text-purple-600">({tierPercent(extendCount)}%)</span>
+                      </div>
+                      <span className="font-mono text-[11px] text-purple-700">
+                        Advanced inquiry
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Concentration Distribution Visual Bar */}
+                  {totalCount > 0 && (
+                    <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-2xs space-y-2">
+                      <div className="flex items-center justify-between text-xs font-mono font-semibold text-slate-700">
+                        <span className="flex items-center gap-1.5">
+                          <BarChart3 className="w-3.5 h-3.5 text-indigo-600" />
+                          Live Concentration Breakdown
+                        </span>
+                        <span>
+                          {excellingCount} Excelling · {secureCount} Secure · {developingCount} Developing · {beginningCount} Beginning
+                        </span>
+                      </div>
+
+                      <div className="h-4 bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+                        <div 
+                          style={{ width: `${tierPercent(supportCount)}%` }} 
+                          className="bg-blue-600 transition-all duration-500" 
+                          title={`Support: ${supportCount} (${tierPercent(supportCount)}%)`}
+                        />
+                        <div 
+                          style={{ width: `${tierPercent(coreCount)}%` }} 
+                          className="bg-indigo-600 transition-all duration-500" 
+                          title={`Core: ${coreCount} (${tierPercent(coreCount)}%)`}
+                        />
+                        <div 
+                          style={{ width: `${tierPercent(extendCount)}%` }} 
+                          className="bg-purple-700 transition-all duration-500" 
+                          title={`Extend: ${extendCount} (${tierPercent(extendCount)}%)`}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] font-mono text-slate-500">
+                        <span className="flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-blue-600" /> Support ({supportCount})
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-indigo-600" /> Core ({coreCount})
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-purple-700" /> Extend ({extendCount})
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Submissions Section */}
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-5">
+                    
+                    {/* Search, Filter & Export Action Bar */}
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Tier Filters */}
+                        <div className="inline-flex bg-slate-100 p-1 rounded-xl font-mono text-xs font-semibold">
+                          {(['All', 'Support', 'Core', 'Extend'] as const).map((tier) => (
+                            <button
+                              key={tier}
+                              onClick={() => setTierFilter(tier)}
+                              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                                tierFilter === tier
+                                  ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              {tier}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Search Input */}
+                        <div className="relative">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            placeholder="Search student or response..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="pl-8 pr-3 py-1.5 text-xs font-sans bg-slate-50 border border-slate-200 rounded-xl focus:outline-2 focus:outline-indigo-600 focus:bg-white transition-all w-48 sm:w-60"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Export Buttons */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => exportClassSubmissionsCsv(activeAssignment, submissions)}
+                          disabled={submissions.length === 0}
+                          className="inline-flex items-center gap-1.5 font-sans font-semibold text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-3.5 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-40"
+                        >
+                          <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                          Export CSV Roster
+                        </button>
+
+                        <button
+                          onClick={() => exportClassMasterDoc(activeAssignment, submissions)}
+                          disabled={submissions.length === 0}
+                          className="inline-flex items-center gap-1.5 font-sans font-semibold text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 px-3.5 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-40"
+                        >
+                          <Download className="w-3.5 h-3.5 text-indigo-600" />
+                          Class Master Report (.doc)
+                        </button>
+
+                        <button
+                          onClick={() => handleDelete(activeAssignment.id)}
+                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all cursor-pointer"
+                          title="Delete assignment and submissions"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Submissions Roster List */}
+                    {filteredSubmissions.length === 0 ? (
+                      <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-100 space-y-2">
+                        <p className="font-sans font-semibold text-sm text-slate-700">
+                          {submissions.length === 0
+                            ? 'No student submissions received yet for this task.'
+                            : 'No submissions match your search or filter criteria.'}
+                        </p>
+                        <p className="font-serif text-xs text-slate-500">
+                          Have students open the Student Portal and enter PIN: <strong>{activeAssignment.code}</strong>
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {filteredSubmissions.map((sub, idx) => (
+                          <div
+                            key={sub.id}
+                            className="bg-slate-50/70 hover:bg-white border border-slate-200 rounded-2xl p-4 transition-all shadow-2xs hover:shadow-xs space-y-3"
+                          >
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                              <div className="flex items-center gap-2.5 flex-wrap">
+                                <span className="font-mono text-xs font-bold text-slate-400">
+                                  #{idx + 1}
+                                </span>
+                                <span className="font-sans font-bold text-base text-slate-900">
+                                  {sub.studentName || 'Anonymous Student'}
+                                </span>
+                                {(sub.curriculum || sub.gradeLevel) && (
+                                  <span className="font-mono text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md font-semibold">
+                                    {sub.curriculum || 'Standard'} • {sub.gradeLevel || 'Class'}
+                                  </span>
+                                )}
+                                {sub.section && (
+                                  <span className="font-mono text-[11px] text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
+                                    Sec: {sub.section}
+                                  </span>
+                                )}
+                                {sub.studentId && (
+                                  <span className="font-mono text-[11px] text-slate-500 bg-slate-200/60 px-2 py-0.5 rounded-md">
+                                    ID: {sub.studentId}
+                                  </span>
+                                )}
+                                <span className={`font-mono text-xs px-2.5 py-0.5 rounded-full border font-bold ${getTierBadge(sub.tier)}`}>
+                                  {sub.tier} Concentration
+                                </span>
+                                {sub.feedback?.level && (
+                                  <span className={`font-mono text-xs px-2.5 py-0.5 rounded-full border font-bold ${getLevelBadge(sub.feedback.level)}`}>
+                                    {sub.feedback.level}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-3 text-xs font-mono text-slate-500">
+                                <span className="flex items-center gap-1">
+                                  <Clock className="w-3.5 h-3.5" />
+                                  {new Date(sub.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                                <button
+                                  onClick={() => setActiveDetailSubmission(sub)}
+                                  className="inline-flex items-center gap-1 font-sans font-semibold text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  Review Feedback
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Student Response Snippet */}
+                            <p className="font-serif text-sm text-slate-800 bg-white p-3 rounded-xl border border-slate-200/80 leading-relaxed">
+                              {sub.answerText}
+                            </p>
+
+                            {/* Formative Strength & Next Step Snippet */}
+                            {sub.feedback && (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs font-serif">
+                                <div className="bg-emerald-50/60 border border-emerald-200/60 p-2.5 rounded-lg text-emerald-950">
+                                  <span className="font-mono text-[10px] uppercase font-bold text-emerald-700 block">
+                                    Strength
+                                  </span>
+                                  {sub.feedback.strength}
+                                </div>
+                                <div className="bg-indigo-50/60 border border-indigo-200/60 p-2.5 rounded-lg text-indigo-950">
+                                  <span className="font-mono text-[10px] uppercase font-bold text-indigo-700 block">
+                                    Growth Next Step
+                                  </span>
+                                  {sub.feedback.next_step}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* VIEW MODE 2: STUDENT DIFFERENTIATION PORTFOLIO & TRACKER */}
+      {activeTab === 'student_tracker' && (
+        <div className="space-y-6">
+          
+          {/* Top Hierarchy Filter Controls: Teacher, Class, Student */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <span className="font-mono text-xs uppercase tracking-wider text-indigo-700 font-bold block mb-0.5">
+                  Organize &amp; Filter Differentiated Records
+                </span>
+                <h3 className="font-sans font-bold text-xl text-slate-900">
+                  Filter by Teacher Name, Class / Year Group, and Student
+                </h3>
               </div>
+
+              {/* Student Search */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search student name or ID..."
+                  value={studentSearchQuery}
+                  onChange={(e) => setStudentSearchQuery(e.target.value)}
+                  className="pl-9 pr-4 py-2 text-xs font-sans bg-slate-50 border border-slate-200 rounded-xl focus:outline-2 focus:outline-indigo-600 focus:bg-white transition-all w-64"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-3 border-t border-slate-100">
+              
+              {/* 1. Teacher Selector */}
+              <div>
+                <label className="block font-mono text-[11px] uppercase tracking-wider text-slate-600 font-bold mb-1.5">
+                  👨‍🏫 Teacher Name
+                </label>
+                <select
+                  value={selectedTeacherFilter}
+                  onChange={(e) => setSelectedTeacherFilter(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-sans font-medium text-slate-800 focus:outline-2 focus:outline-indigo-600"
+                >
+                  <option value="All">All Teachers ({teacherList.length})</option>
+                  {teacherList.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 2. Class / Year Group Selector */}
+              <div>
+                <label className="block font-mono text-[11px] uppercase tracking-wider text-slate-600 font-bold mb-1.5">
+                  🏫 Class / Year Group
+                </label>
+                <select
+                  value={selectedClassFilter}
+                  onChange={(e) => setSelectedClassFilter(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-sans font-medium text-slate-800 focus:outline-2 focus:outline-indigo-600"
+                >
+                  <option value="All">All Classes / Grades ({classList.length})</option>
+                  {classList.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 3. Student Quick Filter */}
+              <div>
+                <label className="block font-mono text-[11px] uppercase tracking-wider text-slate-600 font-bold mb-1.5">
+                  🎓 Select Student ({filteredStudentProfiles.length})
+                </label>
+                <select
+                  value={selectedStudentProfile?.name || ''}
+                  onChange={(e) => setSelectedStudentName(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-sans font-medium text-slate-800 focus:outline-2 focus:outline-indigo-600"
+                >
+                  {filteredStudentProfiles.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name} ({p.submissions.length} tasks)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {filteredStudentProfiles.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center space-y-3">
+              <GraduationCap className="w-10 h-10 text-slate-400 mx-auto" />
+              <h4 className="font-sans font-bold text-lg text-slate-800">No Student Records Found</h4>
+              <p className="font-serif text-xs text-slate-500 max-w-md mx-auto">
+                No students match the current Teacher or Class filters. Once students submit tasks via the Student Portal, their longitudinal records appear here automatically.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              
+              {/* Left Column: Student Roster with Differentiation Task Counts */}
+              <div className="lg:col-span-1 space-y-3">
+                <div className="flex items-center justify-between px-1">
+                  <h4 className="font-mono text-xs uppercase tracking-wider text-slate-600 font-bold">
+                    Student Roster ({filteredStudentProfiles.length})
+                  </h4>
+                  <span className="font-mono text-[11px] text-indigo-600 font-semibold">
+                    Click to Inspect
+                  </span>
+                </div>
+
+                <div className="space-y-2 max-h-[650px] overflow-y-auto pr-1">
+                  {filteredStudentProfiles.map((profile) => {
+                    const isSelected = selectedStudentProfile?.name === profile.name;
+                    return (
+                      <div
+                        key={profile.name}
+                        onClick={() => setSelectedStudentName(profile.name)}
+                        className={`p-4 rounded-2xl border transition-all cursor-pointer space-y-2 ${
+                          isSelected
+                            ? 'bg-indigo-50/90 border-indigo-300 shadow-xs ring-1 ring-indigo-400'
+                            : 'bg-white border-slate-200 hover:border-indigo-200 hover:bg-slate-50/70'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-800 font-bold text-xs flex items-center justify-center">
+                              {profile.name.charAt(0).toUpperCase()}
+                            </span>
+                            <span className="font-sans font-bold text-sm text-slate-900">
+                              {profile.name}
+                            </span>
+                          </div>
+                          
+                          {/* Total differentiation task frequency count */}
+                          <span className="font-mono text-xs font-extrabold bg-indigo-600 text-white px-2 py-0.5 rounded-md">
+                            {profile.submissions.length} Task{profile.submissions.length === 1 ? '' : 's'}
+                          </span>
+                        </div>
+
+                        {/* Tier Breakdown Chips */}
+                        <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                          <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-semibold">
+                            {profile.supportCount} Support
+                          </span>
+                          <span className="bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded font-semibold">
+                            {profile.coreCount} Core
+                          </span>
+                          <span className="bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded font-semibold">
+                            {profile.extendCount} Extend
+                          </span>
+                        </div>
+
+                        <div className="text-[10px] font-mono text-slate-500 flex items-center justify-between pt-1 border-t border-slate-100">
+                          <span className="line-clamp-1">
+                            {Array.from(profile.classes).join(', ') || 'General'}
+                          </span>
+                          <span>
+                            {new Date(profile.lastActive).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Right Column: Selected Student's Comprehensive Differentiation Dossier */}
+              {selectedStudentProfile && (
+                <div className="lg:col-span-2 space-y-6">
+                  
+                  {/* Student Dossier Header Card */}
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white font-extrabold text-xl flex items-center justify-center shadow-xs">
+                          {selectedStudentProfile.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs text-indigo-600 font-bold uppercase tracking-wider">
+                              Student Learning Portfolio
+                            </span>
+                            {selectedStudentProfile.studentId && (
+                              <span className="font-mono text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md">
+                                ID: {selectedStudentProfile.studentId}
+                              </span>
+                            )}
+                          </div>
+                          <h3 className="font-sans font-extrabold text-2xl text-slate-900">
+                            {selectedStudentProfile.name}
+                          </h3>
+                        </div>
+                      </div>
+
+                      {/* Export Dossier Document Button */}
+                      <button
+                        onClick={() => exportStudentDossierDoc(
+                          selectedStudentProfile.name,
+                          selectedStudentProfile.submissions,
+                          assignments
+                        )}
+                        className="inline-flex items-center gap-2 font-sans font-bold text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl transition-all shadow-xs cursor-pointer shrink-0"
+                      >
+                        <FileText className="w-4 h-4" />
+                        Download Student Dossier (.doc)
+                      </button>
+                    </div>
+
+                    {/* Frequency Statistics Bar */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl">
+                        <span className="font-mono text-[10px] uppercase text-slate-500 font-bold block">
+                          Total Diff Tasks
+                        </span>
+                        <div className="font-sans font-extrabold text-2xl text-slate-900">
+                          {selectedStudentProfile.submissions.length}
+                        </div>
+                      </div>
+
+                      <div className="bg-blue-50 border border-blue-200 p-3 rounded-xl">
+                        <span className="font-mono text-[10px] uppercase text-blue-700 font-bold block">
+                          Support Tasks
+                        </span>
+                        <div className="font-sans font-extrabold text-2xl text-blue-900">
+                          {selectedStudentProfile.supportCount}
+                        </div>
+                      </div>
+
+                      <div className="bg-indigo-50 border border-indigo-200 p-3 rounded-xl">
+                        <span className="font-mono text-[10px] uppercase text-indigo-700 font-bold block">
+                          Core Tasks
+                        </span>
+                        <div className="font-sans font-extrabold text-2xl text-indigo-900">
+                          {selectedStudentProfile.coreCount}
+                        </div>
+                      </div>
+
+                      <div className="bg-purple-50 border border-purple-200 p-3 rounded-xl">
+                        <span className="font-mono text-[10px] uppercase text-purple-700 font-bold block">
+                          Extend Tasks
+                        </span>
+                        <div className="font-sans font-extrabold text-2xl text-purple-900">
+                          {selectedStudentProfile.extendCount}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-xs font-serif text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-100 flex items-center justify-between">
+                      <span>
+                        <strong>Associated Teachers:</strong> {Array.from(selectedStudentProfile.teachers).join(', ') || 'N/A'}
+                      </span>
+                      <span>
+                        <strong>Classes / Subjects:</strong> {Array.from(selectedStudentProfile.classes).join(', ') || 'N/A'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Chronological List of Differentiated Tasks Completed by This Student */}
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+                    <h4 className="font-sans font-bold text-lg text-slate-900 flex items-center justify-between">
+                      <span>Differentiated Task Submission History</span>
+                      <span className="font-mono text-xs text-slate-500 font-normal">
+                        {selectedStudentProfile.submissions.length} records logged
+                      </span>
+                    </h4>
+
+                    <div className="space-y-4">
+                      {selectedStudentProfile.submissions.map((sub, i) => {
+                        const assign = assignmentLookup.get(sub.assignmentId);
+                        return (
+                          <div
+                            key={sub.id}
+                            className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 shadow-2xs"
+                          >
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                              <div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-mono text-xs font-bold text-slate-400">
+                                    #{i + 1}
+                                  </span>
+                                  <span className="font-sans font-bold text-base text-slate-900">
+                                    {assign?.title || 'Class Differentiated Task'}
+                                  </span>
+                                  <span className={`font-mono text-xs px-2.5 py-0.5 rounded-full border font-bold ${getTierBadge(sub.tier)}`}>
+                                    {sub.tier} Concentration
+                                  </span>
+                                  {sub.feedback?.level && (
+                                    <span className={`font-mono text-xs px-2.5 py-0.5 rounded-full border font-bold ${getLevelBadge(sub.feedback.level)}`}>
+                                      {sub.feedback.level}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="font-mono text-[10px] text-slate-500 block mt-0.5">
+                                  Teacher: {assign?.teacherName || 'Instructor'} · Class: {assign?.context || 'Secondary'} · PIN: {sub.assignmentCode}
+                                </span>
+                              </div>
+
+                              <span className="font-mono text-xs text-slate-500 shrink-0">
+                                {new Date(sub.submittedAt).toLocaleDateString()} at {new Date(sub.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+
+                            {/* Original Core Task Prompt */}
+                            {assign?.originalTask && (
+                              <div className="bg-white/80 p-2.5 rounded-xl border border-slate-200/80 text-xs font-serif text-slate-700">
+                                <span className="font-mono text-[10px] uppercase font-bold text-slate-500 block">
+                                  Core Task Prompt
+                                </span>
+                                "{assign.originalTask}"
+                              </div>
+                            )}
+
+                            {/* Student's Actual Written Response */}
+                            <div className="bg-white p-3 rounded-xl border border-slate-200 text-sm font-serif text-slate-900 leading-relaxed whitespace-pre-wrap">
+                              <span className="font-mono text-[10px] uppercase font-bold text-indigo-700 block mb-1">
+                                Student's Completed Work ({sub.tier} Tier)
+                              </span>
+                              {sub.answerText}
+                            </div>
+
+                            {/* Formative Feedback */}
+                            {sub.feedback && (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs font-serif">
+                                <div className="bg-emerald-50/70 border border-emerald-200 p-2.5 rounded-xl text-emerald-950">
+                                  <span className="font-mono text-[10px] uppercase font-bold text-emerald-700 block">
+                                    Demonstrated Strength
+                                  </span>
+                                  {sub.feedback.strength}
+                                </div>
+                                <div className="bg-indigo-50/70 border border-indigo-200 p-2.5 rounded-xl text-indigo-950">
+                                  <span className="font-mono text-[10px] uppercase font-bold text-indigo-700 block">
+                                    Growth Next Step
+                                  </span>
+                                  {sub.feedback.next_step}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

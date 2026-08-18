@@ -57,6 +57,8 @@ export const TeacherAssignModal: React.FC<TeacherAssignModalProps> = ({
       code: newCode,
       title: title.trim(),
       teacherName: teacherName.trim() || 'Instructor',
+      curriculum: result.curriculum,
+      gradeLevel: result.gradeLevel,
       originalTask: result.originalTask,
       context: result.context,
       axis: result.axis,
@@ -158,11 +160,11 @@ export const TeacherAssignModal: React.FC<TeacherAssignModalProps> = ({
                 />
               </div>
 
-              {/* Teacher Name */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Teacher Name & Curriculum / Axis */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block font-mono text-xs uppercase tracking-wider text-slate-700 font-semibold mb-1">
-                    Teacher Name / Department
+                    Teacher / Dept
                   </label>
                   <input
                     type="text"
@@ -175,10 +177,19 @@ export const TeacherAssignModal: React.FC<TeacherAssignModalProps> = ({
 
                 <div>
                   <label className="block font-mono text-xs uppercase tracking-wider text-slate-700 font-semibold mb-1">
+                    Curriculum &amp; Class
+                  </label>
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs font-mono font-bold text-indigo-900 truncate">
+                    {result.curriculum || 'Standard'} • {result.gradeLevel || 'General'}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block font-mono text-xs uppercase tracking-wider text-slate-700 font-semibold mb-1">
                     Differentiation Axis
                   </label>
-                  <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 text-xs font-mono font-bold text-slate-700 uppercase">
-                    {result.axis} Concentration
+                  <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 text-xs font-mono font-bold text-slate-700 uppercase truncate">
+                    {result.axis}
                   </div>
                 </div>
               </div>

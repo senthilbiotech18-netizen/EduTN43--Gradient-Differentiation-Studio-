@@ -9,6 +9,8 @@ import { InstallPwaModal } from './components/InstallPwaModal';
 import { TeacherAssignModal } from './components/TeacherAssignModal';
 import { LiveClassDashboard } from './components/LiveClassDashboard';
 import { StudentClassPortal } from './components/StudentClassPortal';
+import { TeacherUnlockModal } from './components/TeacherUnlockModal';
+import { TeacherLoginCard } from './components/TeacherLoginCard';
 import { 
   DiffusedResult, 
   DifferentiationAxis, 
@@ -16,7 +18,8 @@ import {
   MarkingFeedback, 
   StudentWorkPackage, 
   TierType,
-  AppViewMode,
+  AppPortalMode,
+  TeacherSubTab,
   ClassAssignment
 } from './types';
 import { downloadTeacherMasterDoc } from './utils/exportUtils';
@@ -64,7 +67,15 @@ async function safeFetchApi<T = any>(url: string, options: RequestInit): Promise
 }
 
 export default function App() {
-  const [activeMode, setActiveMode] = useState<AppViewMode>('diffuse_studio');
+  const [portalMode, setPortalMode] = useState<AppPortalMode>('student');
+  const [teacherSubTab, setTeacherSubTab] = useState<TeacherSubTab>('diffuse_studio');
+  const [isTeacherAuthenticated, setIsTeacherAuthenticated] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem('gradient_teacher_auth') === 'true';
+    }
+    return false;
+  });
+
   const [result, setResult] = useState<DiffusedResult | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('');
@@ -76,6 +87,7 @@ export default function App() {
   const [selectedDashboardAssignmentId, setSelectedDashboardAssignmentId] = useState<string | null>(null);
   const [studentPortalCode, setStudentPortalCode] = useState<string | null>(null);
   const [activeClassCount, setActiveClassCount] = useState<number>(0);
+  const [isTeacherUnlockModalOpen, setIsTeacherUnlockModalOpen] = useState<boolean>(false);
 
   // PWA Install Prompt state
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -93,11 +105,13 @@ export default function App() {
 
       if (codeParam) {
         setStudentPortalCode(codeParam);
-        setActiveMode('student_portal');
-      } else if (modeParam === 'student') {
-        setActiveMode('student_portal');
+        setPortalMode('student');
+      } else if (modeParam === 'teacher' || modeParam === 'diffuse_studio') {
+        setPortalMode('teacher');
+        setTeacherSubTab('diffuse_studio');
       } else if (modeParam === 'live_board') {
-        setActiveMode('live_class_board');
+        setPortalMode('teacher');
+        setTeacherSubTab('live_class_board');
       }
     }
 
@@ -332,12 +346,27 @@ export default function App() {
   const handleViewDashboardForAssignment = (assignId: string) => {
     setIsAssignModalOpen(false);
     setSelectedDashboardAssignmentId(assignId);
-    setActiveMode('live_class_board');
+    setPortalMode('teacher');
+    setTeacherSubTab('live_class_board');
   };
 
   const handleOpenStudentViewForCode = (code: string) => {
     setStudentPortalCode(code);
-    setActiveMode('student_portal');
+    setPortalMode('student');
+  };
+
+  const handleTeacherLoginSuccess = () => {
+    setIsTeacherAuthenticated(true);
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('gradient_teacher_auth', 'true');
+    }
+  };
+
+  const handleLockTeacherSession = () => {
+    setIsTeacherAuthenticated(false);
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('gradient_teacher_auth');
+    }
   };
 
   return (
@@ -349,131 +378,160 @@ export default function App() {
           onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
           hasPersonalKey={hasPersonalKey}
           onOpenInstallModal={() => setIsInstallModalOpen(true)}
-          activeMode={activeMode}
-          onSelectMode={setActiveMode}
+          portalMode={portalMode}
+          onSelectPortal={(p) => setPortalMode(p)}
+          teacherSubTab={teacherSubTab}
+          onSelectTeacherSubTab={(tab) => setTeacherSubTab(tab)}
+          isTeacherAuthenticated={isTeacherAuthenticated}
+          onLockTeacherSession={handleLockTeacherSession}
           onOpenAssignModal={() => setIsAssignModalOpen(true)}
           activeClassCount={activeClassCount}
         />
 
-        {/* View 1: Task Differentiation Studio */}
-        {activeMode === 'diffuse_studio' && (
-          <div className="space-y-8 animate-fadeIn">
-            <TaskInputPanel
-              onGenerate={handleGenerate}
-              isLoading={isLoading}
-              statusMessage={statusMessage}
+        {/* ---------------------------------------------------- */}
+        {/* PORTAL 1: STUDENT TASK VIEW (OPEN ACCESS / NO PASSCODE) */}
+        {/* ---------------------------------------------------- */}
+        {portalMode === 'student' && (
+          <div className="animate-fadeIn">
+            <StudentClassPortal
+              initialCode={studentPortalCode}
+              onBackToStudio={() => {
+                setPortalMode('teacher');
+                setTeacherSubTab('diffuse_studio');
+              }}
+              onOpenTeacherDashboard={(id) => {
+                setSelectedDashboardAssignmentId(id);
+                setPortalMode('teacher');
+                setTeacherSubTab('live_class_board');
+              }}
             />
-
-            {/* Results Container */}
-            {result && (
-              <div className="space-y-8 animate-fadeIn">
-                {/* Master Classroom & Assign Actions Bar */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Option A: Assign to Whole Class */}
-                  <div className="bg-gradient-to-br from-indigo-900 to-purple-900 text-white rounded-3xl p-5 shadow-sm flex flex-col justify-between space-y-4">
-                    <div className="flex items-start gap-3.5">
-                      <div className="p-3 bg-white/15 rounded-2xl shrink-0 backdrop-blur-xs">
-                        <Users className="w-6 h-6 text-indigo-200" />
-                      </div>
-                      <div>
-                        <span className="font-mono text-[10px] uppercase tracking-widest text-indigo-300 font-bold block">
-                          Whole-Class Add-On
-                        </span>
-                        <h3 className="font-sans font-bold text-lg text-white">
-                          Assign This Task to Whole Class
-                        </h3>
-                        <p className="font-serif text-xs text-indigo-100/90 leading-relaxed mt-1">
-                          Generate a 6-digit student join PIN. Students select their concentration lane, and answers stream into your Live Class Dashboard.
-                        </p>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => setIsAssignModalOpen(true)}
-                      className="w-full inline-flex items-center justify-center gap-2 font-sans font-bold text-xs bg-white text-indigo-900 hover:bg-indigo-50 px-4 py-3 rounded-xl shadow-md transition-all active:scale-[0.99] cursor-pointer"
-                    >
-                      <Share2 className="w-4 h-4 text-indigo-700" />
-                      Create Class Assignment PIN &amp; Distribute →
-                    </button>
-                  </div>
-
-                  {/* Option B: Download Master Teacher Package */}
-                  <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm flex flex-col justify-between space-y-4">
-                    <div className="flex items-start gap-3.5">
-                      <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl shrink-0">
-                        <Layers className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500 font-bold block">
-                          Teacher Dossier
-                        </span>
-                        <h3 className="font-sans font-bold text-lg text-slate-900">
-                          Master Differentiation Document
-                        </h3>
-                        <p className="font-serif text-xs text-slate-600 leading-relaxed mt-1">
-                          Export all 3 concentrations, pedagogical scaffolds, and talk moves into a single Word document for lesson planning.
-                        </p>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={handleMasterExport}
-                      className="w-full inline-flex items-center justify-center gap-2 font-sans font-semibold text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 px-4 py-3 rounded-xl transition-all cursor-pointer"
-                    >
-                      <Download className="w-4 h-4 text-slate-600" />
-                      Download Master Plan (.doc)
-                    </button>
-                  </div>
-                </div>
-
-                {/* Differentiated Lanes Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {result.lanes.map((lane, idx) => (
-                    <LaneCard
-                      key={idx}
-                      lane={lane}
-                      index={idx}
-                      axis={result.axis}
-                      context={result.context}
-                      studentAnswer={studentAnswers[idx]}
-                      feedback={markingFeedbacks[idx]}
-                      onAnswerChange={handleAnswerChange}
-                      onMarkAnswer={handleMarkAnswer}
-                      isMarking={isMarking[idx]}
-                      onOpenPreview={(pkg) => setActivePreviewPkg(pkg)}
-                    />
-                  ))}
-                </div>
-
-                {/* Talk Moves & Grouping Tips */}
-                <TalkMovesPanel
-                  talkMoves={result.talk_moves}
-                  groupingTip={result.grouping_tip}
-                />
-              </div>
-            )}
           </div>
         )}
 
-        {/* View 2: Live Class Tracker Dashboard */}
-        {activeMode === 'live_class_board' && (
-          <LiveClassDashboard
-            selectedAssignmentId={selectedDashboardAssignmentId}
-            onBackToStudio={() => setActiveMode('diffuse_studio')}
-            onOpenStudentView={handleOpenStudentViewForCode}
-          />
-        )}
+        {/* ---------------------------------------------------- */}
+        {/* PORTAL 2: TEACHER COMMAND (PASSWORD PROTECTED) */}
+        {/* ---------------------------------------------------- */}
+        {portalMode === 'teacher' && (
+          <>
+            {/* If Teacher is NOT yet authenticated: show Secure Teacher Passcode Login */}
+            {!isTeacherAuthenticated ? (
+              <TeacherLoginCard
+                onSuccess={handleTeacherLoginSuccess}
+                onSwitchToStudent={() => setPortalMode('student')}
+              />
+            ) : (
+              <div className="animate-fadeIn space-y-8">
+                {/* Teacher Sub-Tab A: Task Diffuser Studio */}
+                {teacherSubTab === 'diffuse_studio' && (
+                  <div className="space-y-8 animate-fadeIn">
+                    <TaskInputPanel
+                      onGenerate={handleGenerate}
+                      isLoading={isLoading}
+                      statusMessage={statusMessage}
+                    />
 
-        {/* View 3: Student Join Portal */}
-        {activeMode === 'student_portal' && (
-          <StudentClassPortal
-            initialCode={studentPortalCode}
-            onBackToStudio={() => setActiveMode('diffuse_studio')}
-            onOpenTeacherDashboard={(id) => {
-              setSelectedDashboardAssignmentId(id);
-              setActiveMode('live_class_board');
-            }}
-          />
+                    {/* Results Container */}
+                    {result && (
+                      <div className="space-y-8 animate-fadeIn">
+                        {/* Master Classroom & Assign Actions Bar */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {/* Option A: Assign to Whole Class */}
+                          <div className="bg-gradient-to-br from-indigo-900 to-purple-900 text-white rounded-3xl p-5 shadow-sm flex flex-col justify-between space-y-4">
+                            <div className="flex items-start gap-3.5">
+                              <div className="p-3 bg-white/15 rounded-2xl shrink-0 backdrop-blur-xs">
+                                <Users className="w-6 h-6 text-indigo-200" />
+                              </div>
+                              <div>
+                                <span className="font-mono text-[10px] uppercase tracking-widest text-indigo-300 font-bold block">
+                                  Whole-Class Distribution
+                                </span>
+                                <h3 className="font-sans font-bold text-lg text-white">
+                                  Assign This Task to Whole Class
+                                </h3>
+                                <p className="font-serif text-xs text-indigo-100/90 leading-relaxed mt-1">
+                                  Generate a 6-digit student join PIN. Students select their concentration lane, enter Name &amp; Section, and answers stream into your Live Tracker.
+                                </p>
+                              </div>
+                            </div>
+
+                            <button
+                              onClick={() => setIsAssignModalOpen(true)}
+                              className="w-full inline-flex items-center justify-center gap-2 font-sans font-bold text-xs bg-white text-indigo-900 hover:bg-indigo-50 px-4 py-3 rounded-xl shadow-md transition-all active:scale-[0.99] cursor-pointer"
+                            >
+                              <Share2 className="w-4 h-4 text-indigo-700" />
+                              Create Class Assignment PIN &amp; Distribute →
+                            </button>
+                          </div>
+
+                          {/* Option B: Download Master Teacher Package */}
+                          <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm flex flex-col justify-between space-y-4">
+                            <div className="flex items-start gap-3.5">
+                              <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl shrink-0">
+                                <Layers className="w-6 h-6" />
+                              </div>
+                              <div>
+                                <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500 font-bold block">
+                                  Teacher Dossier
+                                </span>
+                                <h3 className="font-sans font-bold text-lg text-slate-900">
+                                  Master Differentiation Document
+                                </h3>
+                                <p className="font-serif text-xs text-slate-600 leading-relaxed mt-1">
+                                  Export all 3 concentrations, pedagogical scaffolds, and talk moves into a single Word document for lesson planning.
+                                </p>
+                              </div>
+                            </div>
+
+                            <button
+                              onClick={handleMasterExport}
+                              className="w-full inline-flex items-center justify-center gap-2 font-sans font-semibold text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 px-4 py-3 rounded-xl transition-all cursor-pointer"
+                            >
+                              <Download className="w-4 h-4 text-slate-600" />
+                              Download Master Plan (.doc)
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Differentiated Lanes Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          {result.lanes.map((lane, idx) => (
+                            <LaneCard
+                              key={idx}
+                              lane={lane}
+                              index={idx}
+                              axis={result.axis}
+                              context={result.context}
+                              studentAnswer={studentAnswers[idx]}
+                              feedback={markingFeedbacks[idx]}
+                              onAnswerChange={handleAnswerChange}
+                              onMarkAnswer={handleMarkAnswer}
+                              isMarking={isMarking[idx]}
+                              onOpenPreview={(pkg) => setActivePreviewPkg(pkg)}
+                            />
+                          ))}
+                        </div>
+
+                        {/* Talk Moves & Grouping Tips */}
+                        <TalkMovesPanel
+                          talkMoves={result.talk_moves}
+                          groupingTip={result.grouping_tip}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Teacher Sub-Tab B: Class Live Tracker & Longitudinal Portfolios */}
+                {teacherSubTab === 'live_class_board' && (
+                  <LiveClassDashboard
+                    selectedAssignmentId={selectedDashboardAssignmentId}
+                    onBackToStudio={() => setTeacherSubTab('diffuse_studio')}
+                    onOpenStudentView={handleOpenStudentViewForCode}
+                  />
+                )}
+              </div>
+            )}
+          </>
         )}
 
         {/* Assign to Class Modal */}
@@ -503,6 +561,17 @@ export default function App() {
           isOpen={isInstallModalOpen}
           onClose={() => setIsInstallModalOpen(false)}
           deferredPrompt={deferredPrompt}
+        />
+
+        {/* Teacher Unlock Security Modal */}
+        <TeacherUnlockModal
+          isOpen={isTeacherUnlockModalOpen}
+          onClose={() => setIsTeacherUnlockModalOpen(false)}
+          onSuccess={() => {
+            setIsTeacherUnlockModalOpen(false);
+            handleTeacherLoginSuccess();
+            setPortalMode('teacher');
+          }}
         />
       </div>
     </div>

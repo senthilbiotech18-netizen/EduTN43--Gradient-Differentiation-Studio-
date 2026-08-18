@@ -72,7 +72,53 @@ function cleanJsonText(raw: string): string {
   return text;
 }
 
-// High-quality pedagogical fallback for when AI model is rate-limited or offline
+// Multi-model fallback sequence to handle transient 503 high demand or quota limits
+// We prioritize high-throughput, low-latency models first to avoid spike bottlenecks
+const CANDIDATE_MODELS = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.7-flash'];
+
+async function generateWithModelFallback(
+  ai: GoogleGenAI,
+  prompt: string,
+  config?: any
+): Promise<string> {
+  let lastError: any = null;
+
+  for (const model of CANDIDATE_MODELS) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: config || {
+          responseMimeType: 'application/json',
+          temperature: 0.2,
+        },
+      });
+
+      if (response.text) {
+        return response.text;
+      }
+    } catch (err: any) {
+      lastError = err;
+      const status = err?.status || err?.code || 'busy';
+      console.log(`[AI Dispatcher] Model ${model} status (${status}). Moving to next candidate...`);
+      // Brief jitter before next attempt
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+
+  throw lastError || new Error('All candidate models failed.');
+}
+
+function generateFormativeFeedbackFallback(student_answer: string, tier?: string) {
+  const wordCount = (student_answer || '').trim().split(/\s+/).filter(Boolean).length;
+  const level = wordCount > 35 ? 'Excelling' : wordCount > 20 ? 'Secure' : wordCount > 10 ? 'Developing' : 'Beginning';
+  return {
+    level,
+    strength: `Solid effort in the ${tier || 'assigned'} lane! You addressed the prompt directly and demonstrated clear initial engagement.`,
+    next_step: 'Try adding one more key subject term and elaborating with a specific analytical example.',
+    detailed_feedback: `Your response shows active participation. Continuing to connect key ideas with detailed evidence will help deepen your overall mastery.`
+  };
+}
 function generateSmartFallback(task: string, context?: string, axis?: string) {
   const shortTask = task.trim();
   const selectedAxis = axis || 'readiness';
@@ -323,14 +369,20 @@ app.post('/api/test-key', async (req, res) => {
     return res.status(400).json({ valid: false, error: 'No API key provided.' });
   }
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: 'Respond with OK',
-    });
-    if (response.text) {
-      return res.json({ valid: true });
+    for (const model of CANDIDATE_MODELS) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: 'Respond with OK',
+        });
+        if (response.text) {
+          return res.json({ valid: true });
+        }
+      } catch (err: any) {
+        console.warn(`Test key probe on ${model} returned:`, err?.message || err);
+      }
     }
-    return res.json({ valid: false, error: 'No response received from model.' });
+    return res.status(400).json({ valid: false, error: 'Could not validate key against Gemini models. Please check if your key is active in Google AI Studio.' });
   } catch (error: any) {
     return res.status(400).json({ valid: false, error: error.message || 'Invalid API key or connection error.' });
   }
@@ -351,27 +403,61 @@ app.post('/api/diffuse', async (req, res) => {
     product: 'three PRODUCT CHOICE options named exactly "Support", "Core", "Extend" where Support = structured written response format; Core = visual model or infographic summary format; Extend = audio script, debate pitch, or self-directed demonstration format assessing the same understanding.'
   };
 
-  const selectedAxisDesc = axisDescriptions[axis] || axisDescriptions.readiness;
+  const selectedAxisDesc = axisDescriptions[axis] || axisDescriptions.readiness;  const prompt = `You are an expert master educator specializing in adaptive classroom differentiation across international and national curricula (EduTN43 Gradient).
 
-  const prompt = `You are an expert IB MYP and Cambridge IGCSE master teacher helping differentiate ONE core classroom task into 3 distinct learning lanes for a secondary classroom.
+CRITICAL CURRICULUM & GRADE LEVEL CALIBRATION RULES:
+1. STRICT CURRICULUM & GRADE COGNITIVE LOAD TRACKING:
+   - Target Context & Grade Level: ${context || 'IBMYP / IGCSE / ICSE / IBDP'}
+   - You MUST tailor vocabulary, reading level, sentence complexity, cognitive load, and scaffolding EXACTLY to the specified Curriculum and Grade Level:
+     * IGCSE (FM 1 to FM 5):
+       - FM 1 (Grade 6 / Age 11-12): Emerging secondary. Use simple, everyday words, very short sentences, concrete prompts.
+       - FM 2 (Grade 7 / Age 12-13): Early secondary. Direct, clear, and relatable.
+       - FM 3 (Grade 8 / Age 13-14): Mid secondary. Standard concise secondary tasks with guided terminology.
+       - FM 4 (Grade 9 / Age 14-15): Upper secondary / IGCSE Year 1. Structured analytical prompts.
+       - FM 5 (Grade 10 / Age 15-16): IGCSE exam year. Clear, structured exam-style questions with precise command terms.
+     * IBMYP (MYP 1 to MYP 5):
+       - MYP 1 (Grade 6): Inquiry-based, accessible, concrete conceptual framing.
+       - MYP 2 (Grade 7): Guided exploration of global contexts and related concepts.
+       - MYP 3 (Grade 8): Balanced conceptual inquiry with structured analytical criteria.
+       - MYP 4 (Grade 9): Critical thinking with command terms and synthesis.
+       - MYP 5 (Grade 10): Rigorous criterion-referenced inquiry and synthesis.
+     * ICSE (Grade 1 to Grade 10):
+       - Grades 1-5: Primary level. Clear, illustrative, step-by-step guidance.
+       - Grades 6-8: Middle school. Syllabus-aligned, conceptual clarity with defined terminology.
+       - Grades 9-10: High school board level. Structured, analytical, syllabus-precise questions.
+     * IBDP (IBDP 1 to IBDP 2):
+       - IBDP 1 (Grade 11): Pre-university diploma. Rigorous, analytical, inquiry and Theory of Knowledge (TOK) aware.
+       - IBDP 2 (Grade 12): Final diploma year. High-level evaluative synthesis, critical examination, and precise subject terminology.
 
-CRITICAL CURRICULUM & ACADEMIC LEVEL CONSTRAINTS:
-- You MUST strictly align all tasks, scaffolding, and vocabulary to Middle School and High School level ONLY (Ages 11-16 / Grades 6-10).
-- Permitted Curriculum Frameworks: IB MYP (MYP 1 to MYP 5) and Cambridge IGCSE (FM1 to FM5).
-- STRICTLY PROHIBITED: Do NOT generate higher secondary school level, IB Diploma Programme (DP), A-Level, AP, or university level material under any circumstances. Keep task complexity strictly within the MYP 1-5 or IGCSE FM1-FM5 target scope.
+2. TIER DIFFICULTY GUIDELINES:
+   - SUPPORT LANE (Foundational & Highly Scaffolding):
+     * Must be gentle, clear, and confidence-building for students needing foundational help at this grade level.
+     * Break the task down into 2 or 3 short, bite-sized steps (e.g. "Step 1: Look at...", "Step 2: Use the starter...").
+     * Provide a fill-in-the-blank or sentence starter frame (e.g. "The main reason is ___ because ___").
+     * Give 3 essential, accessible vocabulary terms.
+   
+   - CORE LANE (Standard Grade-Level Objective):
+     * Must be clear, direct, and straightforward for the average student in this exact curriculum grade.
+     * State the core objective in 1-2 focused sentences.
+     * Provide a guiding prompt or paragraph structure.
+     * Give 3-4 standard grade-level vocabulary terms.
 
-Target Curriculum, Class/Year & Subject: ${context || 'Secondary Education (IB MYP / Cambridge IGCSE)'}
+   - EXTEND LANE (Enriching & Challenging — Strictly Calibrated to this Grade Level):
+     * Offer a thoughtful, higher-order thinking challenge (e.g., comparative perspective, evaluation, or real-world application).
+     * The challenge MUST still be achievable and engaging for a student of this specific grade level.
+     * Give 3-4 advanced/enriching terms appropriate for this grade.
+
 Original Core Task / Material: """${task}"""
 
 Generate ${selectedAxisDesc}.
 
 Provide:
 1. Three lanes ("Support", "Core", "Extend"), each with:
-   - task_text: The differentiated prompt/question for the student (clear, direct, age-appropriate for the specified MYP 1-5 / FM1-5 level).
-   - scaffold: Specific scaffolding, sentence starter, or guiding strategy provided.
-   - vocab: Array of 3 to 5 key domain terms needed for this lane at this grade level.
-2. talk_moves: For each tier ("Support", "Core", "Extend"), provide 2 short spoken prompts/questions the teacher can ask out loud to prompt deeper thinking while circulating.
-3. grouping_tip: One practical sentence on seating or group dynamics for this task.
+   - task_text: The differentiated prompt/question (clear, direct, age-appropriate for the specified MYP/FM year level).
+   - scaffold: Concrete scaffolding, sentence starter, or structured strategy provided.
+   - vocab: Array of 3 to 4 domain terms calibrated to this grade level.
+2. talk_moves: For each tier ("Support", "Core", "Extend"), provide 2 friendly spoken prompts the teacher can ask out loud while circulating to prompt thinking without overwhelming the student.
+3. grouping_tip: One practical sentence on seating or peer support for this task.
 
 Return strictly valid JSON matching this schema:
 {
@@ -395,26 +481,25 @@ Return strictly valid JSON matching this schema:
       return res.json(generateSmartFallback(task, context, axis));
     }
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: prompt,
-      config: {
+    try {
+      const responseText = await generateWithModelFallback(ai, prompt, {
         responseMimeType: 'application/json',
         temperature: 0.2,
+      });
+
+      const cleaned = cleanJsonText(responseText);
+      const parsed = JSON.parse(cleaned);
+
+      if (parsed && Array.isArray(parsed.lanes) && parsed.lanes.length >= 3) {
+        return res.json(parsed);
       }
-    });
-
-    const responseText = response.text || '';
-    const cleaned = cleanJsonText(responseText);
-    const parsed = JSON.parse(cleaned);
-
-    return res.json(parsed);
+      return res.json(generateSmartFallback(task, context, axis));
+    } catch (modelError: any) {
+      console.warn('Gemini models unavailable in /api/diffuse, applying smart pedagogical fallback:', modelError?.message || modelError);
+      return res.json(generateSmartFallback(task, context, axis));
+    }
   } catch (error: any) {
     console.error('Error in /api/diffuse:', error);
-    if (customApiKey) {
-      return res.status(400).json({ error: `Custom API Key Error: ${error.message || 'Failed request'}. Please check your key.` });
-    }
-    // Return smart fallback package if shared key experiences traffic limit or outage
     return res.json(generateSmartFallback(task, context, axis));
   }
 });
@@ -452,40 +537,29 @@ Return strictly valid JSON in this exact shape:
     const ai = getGemini(customApiKey);
 
     if (!ai) {
-      const wordCount = student_answer.trim().split(/\s+/).length;
-      const level = wordCount > 30 ? 'Secure' : wordCount > 15 ? 'Developing' : 'Beginning';
-      return res.json({
-        level,
-        strength: `Good attempt in the ${tier} lane! You clearly addressed the core focus of the prompt.`,
-        next_step: 'Try adding one more key vocabulary term and explaining the connection in detail.',
-        detailed_feedback: `Your response shows solid effort. Continuing to use subject-specific vocabulary will strengthen your overall explanation.`
-      });
+      return res.json(generateFormativeFeedbackFallback(student_answer, tier));
     }
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: prompt,
-      config: {
+    try {
+      const responseText = await generateWithModelFallback(ai, prompt, {
         responseMimeType: 'application/json',
         temperature: 0.2,
+      });
+
+      const cleaned = cleanJsonText(responseText);
+      const parsed = JSON.parse(cleaned);
+
+      if (parsed && parsed.level && parsed.strength && parsed.next_step) {
+        return res.json(parsed);
       }
-    });
-
-    const responseText = response.text || '';
-    const cleaned = cleanJsonText(responseText);
-    const parsed = JSON.parse(cleaned);
-
-    return res.json(parsed);
+      return res.json(generateFormativeFeedbackFallback(student_answer, tier));
+    } catch (modelError: any) {
+      console.warn('Gemini models unavailable in /api/mark, applying formative feedback fallback:', modelError?.message || modelError);
+      return res.json(generateFormativeFeedbackFallback(student_answer, tier));
+    }
   } catch (error: any) {
     console.error('Error in /api/mark:', error);
-    const wordCount = student_answer.trim().split(/\s+/).length;
-    const level = wordCount > 35 ? 'Excelling' : wordCount > 20 ? 'Secure' : wordCount > 10 ? 'Developing' : 'Beginning';
-    return res.json({
-      level,
-      strength: `Solid attempt in the ${tier || 'assigned'} lane! You addressed the prompt directly and demonstrated clear initial engagement.`,
-      next_step: 'Try adding one more key subject term and elaborating with a specific example.',
-      detailed_feedback: `Your response shows active participation. Continuing to connect key ideas with detailed evidence will help deepen your overall mastery.`
-    });
+    return res.json(generateFormativeFeedbackFallback(student_answer, tier));
   }
 });
 

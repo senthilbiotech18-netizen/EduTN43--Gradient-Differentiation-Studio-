@@ -4,7 +4,8 @@ import {
   ClassSubmission, 
   TierType, 
   MarkingFeedback, 
-  StudentWorkPackage 
+  StudentWorkPackage,
+  CurriculumType
 } from '../types';
 import { 
   getAssignmentByCode, 
@@ -16,6 +17,7 @@ import {
 import { getStoredApiKey } from '../utils/apiKeyUtils';
 import { markResponseDirect } from '../utils/geminiClient';
 import { downloadStudentWorkPDF, downloadStudentWorkDoc, downloadStudentWorkMarkdown } from '../utils/exportUtils';
+import { CURRICULUM_CONFIGS, getGradesForCurriculum } from '../utils/curriculumConfig';
 import { 
   Users, 
   PenTool, 
@@ -34,7 +36,8 @@ import {
   ChevronDown,
   FileCode,
   FileText,
-  Printer
+  Printer,
+  GraduationCap
 } from 'lucide-react';
 
 interface StudentClassPortalProps {
@@ -52,6 +55,9 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
   const [activeAssignment, setActiveAssignment] = useState<ClassAssignment | null>(null);
   const [selectedTier, setSelectedTier] = useState<TierType>('Core');
   const [studentName, setStudentName] = useState<string>('');
+  const [curriculum, setCurriculum] = useState<CurriculumType>('IGCSE');
+  const [gradeLevel, setGradeLevel] = useState<string>('FM 3');
+  const [section, setSection] = useState<string>('');
   const [studentId, setStudentId] = useState<string>('');
   const [answerText, setAnswerText] = useState<string>('');
   const [pasteWarning, setPasteWarning] = useState<string>('');
@@ -75,6 +81,12 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
     }
   }, [initialCode]);
 
+  const handleCurriculumChange = (newCurriculum: CurriculumType) => {
+    setCurriculum(newCurriculum);
+    const availableGrades = getGradesForCurriculum(newCurriculum);
+    setGradeLevel(availableGrades[Math.floor(availableGrades.length / 2)] || availableGrades[0]);
+  };
+
   const handleFindAssignment = async (codeToSearch: string) => {
     setSearchError('');
     setIsSearching(true);
@@ -83,6 +95,12 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
       if (found) {
         setActiveAssignment(found);
         setSelectedTier('Core');
+        if (found.curriculum && found.curriculum in CURRICULUM_CONFIGS) {
+          setCurriculum(found.curriculum as CurriculumType);
+          if (found.gradeLevel) {
+            setGradeLevel(found.gradeLevel);
+          }
+        }
         setIsSubmittedSuccess(false);
         setSubmissionFeedback(null);
       } else {
@@ -94,6 +112,12 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
       if (localFound) {
         setActiveAssignment(localFound);
         setSelectedTier('Core');
+        if (localFound.curriculum && localFound.curriculum in CURRICULUM_CONFIGS) {
+          setCurriculum(localFound.curriculum as CurriculumType);
+          if (localFound.gradeLevel) {
+            setGradeLevel(localFound.gradeLevel);
+          }
+        }
         setIsSubmittedSuccess(false);
         setSubmissionFeedback(null);
       } else {
@@ -121,10 +145,11 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
 
   const handleSubmitWork = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeAssignment || !currentLane || !answerText.trim() || !studentName.trim()) return;
+    if (!activeAssignment || !currentLane || !answerText.trim() || !studentName.trim() || !section.trim()) return;
 
     setIsSubmitting(true);
     let feedbackData: MarkingFeedback | null = null;
+    const fullContext = `${curriculum} (${gradeLevel}) • ${activeAssignment.context || activeAssignment.title}`;
 
     try {
       const apiKey = getStoredApiKey();
@@ -137,7 +162,7 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
             currentLane.tier,
             currentLane.task_text,
             answerText,
-            activeAssignment.context
+            fullContext
           );
         } catch (e) {
           console.warn('Direct marking failed, attempting fallback', e);
@@ -153,7 +178,9 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
               tier: currentLane.tier,
               task_text: currentLane.task_text,
               student_answer: answerText,
-              context: activeAssignment.context,
+              context: fullContext,
+              curriculum,
+              gradeLevel,
             }),
           });
           if (res.ok) {
@@ -170,9 +197,9 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
         const level = words > 35 ? 'Excelling' : words > 20 ? 'Secure' : words > 10 ? 'Developing' : 'Beginning';
         feedbackData = {
           level,
-          strength: `Well articulated response on the ${currentLane.tier} concentration! You engaged directly with the question concepts.`,
-          next_step: 'Reinforce your conclusion by integrating another subject-specific vocabulary term.',
-          detailed_feedback: 'Your ideas show clear engagement. Elaborating further on specific mechanisms or evidence will boost mastery.',
+          strength: `Well articulated response on the ${currentLane.tier} concentration for ${curriculum} ${gradeLevel}! You engaged directly with the subject concepts.`,
+          next_step: `Reinforce your conclusion by integrating another ${curriculum}-aligned analytical keyword.`,
+          detailed_feedback: `Your ideas demonstrate clear participation in the ${gradeLevel} curriculum. Elaborating further on specific mechanisms or examples will boost mastery.`,
           markedAt: new Date().toISOString(),
         };
       }
@@ -185,6 +212,9 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
         assignmentId: activeAssignment.id,
         assignmentCode: activeAssignment.code,
         studentName: studentName.trim(),
+        curriculum,
+        gradeLevel,
+        section: section.trim(),
         studentId: studentId.trim() || undefined,
         tier: selectedTier,
         answerText: answerText.trim(),
@@ -206,17 +236,22 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
     id: `student_${Date.now()}`,
     taskTitle: activeAssignment.title,
     context: activeAssignment.context,
+    curriculum,
+    gradeLevel,
     axis: activeAssignment.axis,
     tier: selectedTier,
     question: currentLane.task_text,
     scaffold: currentLane.scaffold,
     vocab: currentLane.vocab,
     studentName: studentName || 'Student',
+    section: section || undefined,
     studentId: studentId || undefined,
     answerText,
     submittedAt: new Date().toISOString(),
     feedback: submissionFeedback || undefined,
   } : null;
+
+  const availableGrades = getGradesForCurriculum(curriculum);
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -226,16 +261,16 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
           <button
             onClick={onBackToStudio}
             className="p-2 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all cursor-pointer"
-            title="Return to Studio"
+            title="Exit / Teacher Mode"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
             <span className="font-mono text-xs uppercase tracking-wider text-purple-700 font-bold block">
-              Student Workspace
+              Student Isolated Portal
             </span>
             <h2 className="font-sans font-bold text-xl sm:text-2xl text-slate-900 leading-tight">
-              Classroom Task Portal
+              Classroom Task Workspace
             </h2>
           </div>
         </div>
@@ -250,7 +285,7 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
               onClick={() => setActiveAssignment(null)}
               className="text-xs font-mono text-slate-600 hover:text-slate-900 underline ml-2 cursor-pointer"
             >
-              Switch Task
+              Enter Another PIN
             </button>
           </div>
         )}
@@ -269,7 +304,7 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
                 Enter Teacher's Class PIN
               </h3>
               <p className="font-serif text-sm text-slate-600">
-                Type the 6-character code provided by your teacher to load your differentiated class assignment.
+                Type the 6-character PIN provided by your teacher (e.g. on the board or in your task assignment) to load your differentiated learning task.
               </p>
             </div>
 
@@ -293,44 +328,20 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
 
               <button
                 type="submit"
-                disabled={!inputCode.trim()}
+                disabled={!inputCode.trim() || isSearching}
                 className="w-full inline-flex items-center justify-center gap-2 font-sans font-bold text-sm bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white p-4 rounded-2xl shadow-md hover:shadow-lg transition-all active:scale-[0.99] disabled:opacity-50 cursor-pointer"
               >
                 <Sparkles className="w-4 h-4" />
-                Join Class Task →
+                {isSearching ? 'Loading Task...' : 'Open Differentiated Task →'}
               </button>
             </form>
-          </div>
 
-          {/* Quick Active Class Selector */}
-          {recentAssignments.length > 0 && (
-            <div className="bg-slate-100/80 border border-slate-200 rounded-2xl p-4">
-              <span className="font-mono text-xs text-slate-600 font-bold block mb-2">
-                Recently Published Class Tasks:
-              </span>
-              <div className="space-y-2">
-                {recentAssignments.map((a) => (
-                  <button
-                    key={a.id}
-                    onClick={() => handleFindAssignment(a.code)}
-                    className="w-full text-left bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 p-3 rounded-xl transition-all flex items-center justify-between cursor-pointer"
-                  >
-                    <div>
-                      <span className="font-sans font-bold text-xs text-slate-900 block">
-                        {a.title}
-                      </span>
-                      <span className="font-mono text-[11px] text-slate-500">
-                        {a.context} · Teacher: {a.teacherName || 'Instructor'}
-                      </span>
-                    </div>
-                    <span className="font-mono font-extrabold text-xs bg-indigo-100 text-indigo-800 px-2.5 py-1 rounded-md">
-                      {a.code}
-                    </span>
-                  </button>
-                ))}
-              </div>
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-center gap-2 text-slate-400 font-mono text-[11px]">
+              <span>🔒 Student Isolated Session</span>
+              <span>·</span>
+              <span>Zero Access to Class Rosters &amp; Grades</span>
             </div>
-          )}
+          </div>
         </div>
       ) : (
         /* Student Workspace for Active Assignment */
@@ -339,11 +350,16 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
           {/* Assignment Banner */}
           <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-purple-900 text-white p-6 rounded-3xl shadow-sm space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <span className="font-mono text-xs bg-white/15 px-3 py-1 rounded-full backdrop-blur-xs font-semibold">
-                {activeAssignment.context}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-xs bg-white/15 px-3 py-1 rounded-full backdrop-blur-xs font-semibold">
+                  {activeAssignment.curriculum ? `${activeAssignment.curriculum} [${activeAssignment.gradeLevel || 'Standard'}]` : activeAssignment.context}
+                </span>
+                <span className="font-mono text-xs bg-white/10 px-2.5 py-1 rounded-full text-indigo-100">
+                  {activeAssignment.context}
+                </span>
+              </div>
               <span className="font-mono text-xs text-indigo-200">
-                Assigned by: {activeAssignment.teacherName || 'Your Teacher'}
+                Teacher: {activeAssignment.teacherName || 'Instructor'}
               </span>
             </div>
 
@@ -385,12 +401,12 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
                   Core: {
                     border: isSelected ? 'border-indigo-600 ring-2 ring-indigo-500 bg-indigo-50/50' : 'border-slate-200 hover:border-indigo-300',
                     headerBg: 'bg-indigo-600',
-                    tag: 'Standard Isotonic Target',
+                    tag: 'Standard Target',
                   },
                   Extend: {
                     border: isSelected ? 'border-purple-600 ring-2 ring-purple-500 bg-purple-50/50' : 'border-slate-200 hover:border-purple-300',
                     headerBg: 'bg-purple-700',
-                    tag: 'Inquiry & Critical Extension',
+                    tag: 'Inquiry & Extension',
                   },
                 }[lane.tier];
 
@@ -474,7 +490,84 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
 
               {/* Student Identification and Response Form */}
               <form onSubmit={handleSubmitWork} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="bg-indigo-50/40 p-4 sm:p-5 rounded-2xl border border-indigo-100 space-y-3">
+                  <div className="flex items-center justify-between border-b border-indigo-100 pb-2">
+                    <span className="font-mono text-xs uppercase tracking-wider text-indigo-900 font-bold flex items-center gap-1.5">
+                      <GraduationCap className="w-4 h-4 text-indigo-600" />
+                      Student Information &amp; Curriculum Alignment
+                    </span>
+                    <span className="text-[11px] font-mono text-indigo-700 bg-indigo-100/70 px-2 py-0.5 rounded-md font-medium">
+                      Required for Gradebook Dossier
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {/* Curriculum Selection */}
+                    <div>
+                      <label className="block font-mono text-xs uppercase tracking-wider text-slate-700 font-bold mb-1">
+                        Curriculum <span className="text-rose-500">*</span>
+                      </label>
+                      <select
+                        value={curriculum}
+                        onChange={(e) => handleCurriculumChange(e.target.value as CurriculumType)}
+                        className="w-full font-sans text-sm text-slate-900 bg-white border border-slate-200 rounded-xl p-2.5 focus:outline-2 focus:outline-indigo-600 transition-all cursor-pointer shadow-2xs font-bold"
+                      >
+                        <option value="IGCSE">IGCSE (FM 1–FM 5)</option>
+                        <option value="IBMYP">IB MYP (MYP 1–MYP 5)</option>
+                        <option value="ICSE">ICSE (Grades 1–10)</option>
+                        <option value="IBDP">IBDP (IBDP 1 &amp; 2)</option>
+                      </select>
+                    </div>
+
+                    {/* Class / Grade Level */}
+                    <div>
+                      <label className="block font-mono text-xs uppercase tracking-wider text-slate-700 font-bold mb-1">
+                        Class / Grade ({curriculum}) <span className="text-rose-500">*</span>
+                      </label>
+                      <select
+                        value={gradeLevel}
+                        onChange={(e) => setGradeLevel(e.target.value)}
+                        className="w-full font-sans text-sm text-slate-900 bg-white border border-slate-200 rounded-xl p-2.5 focus:outline-2 focus:outline-indigo-600 transition-all cursor-pointer shadow-2xs font-bold"
+                      >
+                        {availableGrades.map((grade) => (
+                          <option key={grade} value={grade}>
+                            {grade}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Section */}
+                    <div>
+                      <label className="block font-mono text-xs uppercase tracking-wider text-slate-700 font-bold mb-1">
+                        Section <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={section}
+                        onChange={(e) => setSection(e.target.value)}
+                        placeholder="e.g. A, B, Sec 1"
+                        className="w-full font-sans text-sm text-slate-900 bg-white border border-slate-200 rounded-xl p-2.5 focus:outline-2 focus:outline-indigo-600 transition-all shadow-2xs font-medium"
+                      />
+                    </div>
+
+                    {/* Student ID */}
+                    <div>
+                      <label className="block font-mono text-xs uppercase tracking-wider text-slate-700 font-bold mb-1">
+                        Student ID (Opt)
+                      </label>
+                      <input
+                        type="text"
+                        value={studentId}
+                        onChange={(e) => setStudentId(e.target.value)}
+                        placeholder="e.g. ST-208"
+                        className="w-full font-sans text-sm text-slate-900 bg-white border border-slate-200 rounded-xl p-2.5 focus:outline-2 focus:outline-indigo-600 transition-all shadow-2xs"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Full Name */}
                   <div>
                     <label className="block font-mono text-xs uppercase tracking-wider text-slate-700 font-bold mb-1">
                       Your Full Name <span className="text-rose-500">*</span>
@@ -485,20 +578,7 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
                       value={studentName}
                       onChange={(e) => setStudentName(e.target.value)}
                       placeholder="e.g. Maya Lin"
-                      className="w-full font-sans text-sm text-slate-900 bg-slate-50 border border-slate-200 rounded-xl p-3 focus:outline-2 focus:outline-indigo-600 focus:bg-white transition-all shadow-2xs font-medium"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-mono text-xs uppercase tracking-wider text-slate-700 font-bold mb-1">
-                      Student ID / Roll No (Optional)
-                    </label>
-                    <input
-                      type="text"
-                      value={studentId}
-                      onChange={(e) => setStudentId(e.target.value)}
-                      placeholder="e.g. ST-208"
-                      className="w-full font-sans text-sm text-slate-900 bg-slate-50 border border-slate-200 rounded-xl p-3 focus:outline-2 focus:outline-indigo-600 focus:bg-white transition-all shadow-2xs"
+                      className="w-full font-sans text-sm text-slate-900 bg-white border border-slate-200 rounded-xl p-2.5 focus:outline-2 focus:outline-indigo-600 transition-all shadow-2xs font-bold"
                     />
                   </div>
                 </div>
@@ -539,7 +619,7 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
                   <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
                     <button
                       type="submit"
-                      disabled={isSubmitting || !answerText.trim() || !studentName.trim()}
+                      disabled={isSubmitting || !answerText.trim() || !studentName.trim() || !section.trim()}
                       className="w-full sm:w-auto inline-flex items-center justify-center gap-2 font-sans font-bold text-sm bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-7 py-3.5 rounded-2xl shadow-md hover:shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 cursor-pointer"
                       title="Submit your work to your teacher and receive instant AI formative marks"
                     >
@@ -589,9 +669,14 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
                         AI Formative Assessment Result
                       </h4>
                     </div>
-                    <span className="font-mono font-extrabold text-xs bg-indigo-600 text-white px-3 py-1 rounded-full shadow-2xs">
-                      Level: {submissionFeedback.level}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs bg-indigo-100 text-indigo-800 border border-indigo-200 px-2.5 py-1 rounded-full font-bold">
+                        {curriculum} • {gradeLevel}
+                      </span>
+                      <span className="font-mono font-extrabold text-xs bg-indigo-600 text-white px-3 py-1 rounded-full shadow-2xs">
+                        Level: {submissionFeedback.level}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-serif">
