@@ -58,3 +58,35 @@ export interface StudentWorkPackage {
   submittedAt: string;
   feedback?: MarkingFeedback;
 }
+
+export interface ClassAssignment {
+  id: string;
+  code: string;
+  title: string;
+  teacherName: string;
+  originalTask: string;
+  context: string;
+  axis: DifferentiationAxis;
+  lanes: LaneData[];
+  talk_moves: TalkMove[];
+  grouping_tip: string;
+  createdAt: string;
+  allowSelfSelection: boolean;
+  status: 'active' | 'closed';
+}
+
+export interface ClassSubmission {
+  id: string;
+  assignmentId: string;
+  assignmentCode: string;
+  studentName: string;
+  studentId?: string;
+  tier: TierType;
+  answerText: string;
+  submittedAt: string;
+  feedback?: MarkingFeedback;
+  pasteAttemptCount?: number;
+}
+
+export type AppViewMode = 'diffuse_studio' | 'live_class_board' | 'student_portal';
+

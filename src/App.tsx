@@ -6,19 +6,25 @@ import { TalkMovesPanel } from './components/TalkMovesPanel';
 import { ExportModal } from './components/ExportModal';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { InstallPwaModal } from './components/InstallPwaModal';
+import { TeacherAssignModal } from './components/TeacherAssignModal';
+import { LiveClassDashboard } from './components/LiveClassDashboard';
+import { StudentClassPortal } from './components/StudentClassPortal';
 import { 
   DiffusedResult, 
   DifferentiationAxis, 
   StudentAnswer, 
   MarkingFeedback, 
   StudentWorkPackage, 
-  TierType 
+  TierType,
+  AppViewMode,
+  ClassAssignment
 } from './types';
 import { downloadTeacherMasterDoc } from './utils/exportUtils';
 import { getStoredApiKey } from './utils/apiKeyUtils';
 import { diffuseTaskDirect, markResponseDirect } from './utils/geminiClient';
 import { generateSmartFallback } from './utils/fallbackGenerator';
-import { Download, Layers, Sparkles, CheckCircle2 } from 'lucide-react';
+import { getAllAssignments, saveClassAssignment } from './utils/classAssignmentStorage';
+import { Download, Layers, Sparkles, CheckCircle2, Users, Share2, ArrowRight } from 'lucide-react';
 
 async function safeFetchApi<T = any>(url: string, options: RequestInit): Promise<T> {
   let response: Response;
@@ -58,11 +64,18 @@ async function safeFetchApi<T = any>(url: string, options: RequestInit): Promise
 }
 
 export default function App() {
+  const [activeMode, setActiveMode] = useState<AppViewMode>('diffuse_studio');
   const [result, setResult] = useState<DiffusedResult | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState<boolean>(false);
   const [hasPersonalKey, setHasPersonalKey] = useState<boolean>(false);
+
+  // Classroom Assignment & Dashboard States
+  const [isAssignModalOpen, setIsAssignModalOpen] = useState<boolean>(false);
+  const [selectedDashboardAssignmentId, setSelectedDashboardAssignmentId] = useState<string | null>(null);
+  const [studentPortalCode, setStudentPortalCode] = useState<string | null>(null);
+  const [activeClassCount, setActiveClassCount] = useState<number>(0);
 
   // PWA Install Prompt state
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -70,6 +83,23 @@ export default function App() {
 
   useEffect(() => {
     setHasPersonalKey(Boolean(getStoredApiKey()));
+    setActiveClassCount(getAllAssignments().length);
+
+    // Check URL search parameters for quick direct joins
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const codeParam = params.get('code');
+      const modeParam = params.get('mode');
+
+      if (codeParam) {
+        setStudentPortalCode(codeParam);
+        setActiveMode('student_portal');
+      } else if (modeParam === 'student') {
+        setActiveMode('student_portal');
+      } else if (modeParam === 'live_board') {
+        setActiveMode('live_class_board');
+      }
+    }
 
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
@@ -236,7 +266,8 @@ export default function App() {
             level,
             strength: `Great effort on the ${lane.tier} lane! You directly addressed the question and demonstrated key understanding.`,
             next_step: 'Incorporate one additional subject key term to further strengthen your analytical explanation.',
-            detailed_feedback: `Your response shows active engagement with the prompt. Continuing to support your observations with specific evidence will help build deeper subject mastery.`
+            detailed_feedback: `Your response shows active engagement with the prompt. Continuing to support your observations with specific evidence will help build deeper subject mastery.`,
+            markedAt: new Date().toISOString(),
           };
         }
       }
@@ -278,6 +309,21 @@ export default function App() {
     setStatusMessage('');
   };
 
+  const handleAssignmentCreated = (newAssign: ClassAssignment) => {
+    setActiveClassCount(getAllAssignments().length);
+  };
+
+  const handleViewDashboardForAssignment = (assignId: string) => {
+    setIsAssignModalOpen(false);
+    setSelectedDashboardAssignmentId(assignId);
+    setActiveMode('live_class_board');
+  };
+
+  const handleOpenStudentViewForCode = (code: string) => {
+    setStudentPortalCode(code);
+    setActiveMode('student_portal');
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased selection:bg-indigo-600 selection:text-white">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -287,68 +333,141 @@ export default function App() {
           onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
           hasPersonalKey={hasPersonalKey}
           onOpenInstallModal={() => setIsInstallModalOpen(true)}
+          activeMode={activeMode}
+          onSelectMode={setActiveMode}
+          onOpenAssignModal={() => setIsAssignModalOpen(true)}
+          activeClassCount={activeClassCount}
         />
 
-        <TaskInputPanel
-          onGenerate={handleGenerate}
-          isLoading={isLoading}
-          statusMessage={statusMessage}
-        />
-
-        {/* Results Container */}
-        {result && (
+        {/* View 1: Task Differentiation Studio */}
+        {activeMode === 'diffuse_studio' && (
           <div className="space-y-8 animate-fadeIn">
-            {/* Master Classroom Export Bar */}
-            <div className="bg-indigo-50/70 border border-indigo-200/90 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-sm-center justify-between gap-4 shadow-xs">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-indigo-600 text-white rounded-xl shrink-0 shadow-2xs">
-                  <Layers className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-sans font-bold text-base text-slate-900">
-                    Master Classroom Differentiation Package
-                  </h3>
-                  <p className="font-mono text-xs text-slate-600">
-                    Export all 3 lanes, student answers, and teacher talk moves into a single master document.
-                  </p>
-                </div>
-              </div>
-
-              <button
-                onClick={handleMasterExport}
-                className="inline-flex items-center justify-center gap-2 font-sans font-semibold text-xs bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-4 py-2.5 rounded-xl shadow-xs transition-all cursor-pointer whitespace-nowrap"
-              >
-                <Download className="w-4 h-4" />
-                Download Master Package (.doc)
-              </button>
-            </div>
-
-            {/* Differentiated Lanes Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {result.lanes.map((lane, idx) => (
-                <LaneCard
-                  key={idx}
-                  lane={lane}
-                  index={idx}
-                  axis={result.axis}
-                  context={result.context}
-                  studentAnswer={studentAnswers[idx]}
-                  feedback={markingFeedbacks[idx]}
-                  onAnswerChange={handleAnswerChange}
-                  onMarkAnswer={handleMarkAnswer}
-                  isMarking={isMarking[idx]}
-                  onOpenPreview={(pkg) => setActivePreviewPkg(pkg)}
-                />
-              ))}
-            </div>
-
-            {/* Talk Moves & Grouping Tips */}
-            <TalkMovesPanel
-              talkMoves={result.talk_moves}
-              groupingTip={result.grouping_tip}
+            <TaskInputPanel
+              onGenerate={handleGenerate}
+              isLoading={isLoading}
+              statusMessage={statusMessage}
             />
+
+            {/* Results Container */}
+            {result && (
+              <div className="space-y-8 animate-fadeIn">
+                {/* Master Classroom & Assign Actions Bar */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Option A: Assign to Whole Class */}
+                  <div className="bg-gradient-to-br from-indigo-900 to-purple-900 text-white rounded-3xl p-5 shadow-sm flex flex-col justify-between space-y-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="p-3 bg-white/15 rounded-2xl shrink-0 backdrop-blur-xs">
+                        <Users className="w-6 h-6 text-indigo-200" />
+                      </div>
+                      <div>
+                        <span className="font-mono text-[10px] uppercase tracking-widest text-indigo-300 font-bold block">
+                          Whole-Class Add-On
+                        </span>
+                        <h3 className="font-sans font-bold text-lg text-white">
+                          Assign This Task to Whole Class
+                        </h3>
+                        <p className="font-serif text-xs text-indigo-100/90 leading-relaxed mt-1">
+                          Generate a 6-digit student join PIN. Students select their concentration lane, and answers stream into your Live Class Dashboard.
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => setIsAssignModalOpen(true)}
+                      className="w-full inline-flex items-center justify-center gap-2 font-sans font-bold text-xs bg-white text-indigo-900 hover:bg-indigo-50 px-4 py-3 rounded-xl shadow-md transition-all active:scale-[0.99] cursor-pointer"
+                    >
+                      <Share2 className="w-4 h-4 text-indigo-700" />
+                      Create Class Assignment PIN &amp; Distribute →
+                    </button>
+                  </div>
+
+                  {/* Option B: Download Master Teacher Package */}
+                  <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm flex flex-col justify-between space-y-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl shrink-0">
+                        <Layers className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500 font-bold block">
+                          Teacher Dossier
+                        </span>
+                        <h3 className="font-sans font-bold text-lg text-slate-900">
+                          Master Differentiation Document
+                        </h3>
+                        <p className="font-serif text-xs text-slate-600 leading-relaxed mt-1">
+                          Export all 3 concentrations, pedagogical scaffolds, and talk moves into a single Word document for lesson planning.
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={handleMasterExport}
+                      className="w-full inline-flex items-center justify-center gap-2 font-sans font-semibold text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 px-4 py-3 rounded-xl transition-all cursor-pointer"
+                    >
+                      <Download className="w-4 h-4 text-slate-600" />
+                      Download Master Plan (.doc)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Differentiated Lanes Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {result.lanes.map((lane, idx) => (
+                    <LaneCard
+                      key={idx}
+                      lane={lane}
+                      index={idx}
+                      axis={result.axis}
+                      context={result.context}
+                      studentAnswer={studentAnswers[idx]}
+                      feedback={markingFeedbacks[idx]}
+                      onAnswerChange={handleAnswerChange}
+                      onMarkAnswer={handleMarkAnswer}
+                      isMarking={isMarking[idx]}
+                      onOpenPreview={(pkg) => setActivePreviewPkg(pkg)}
+                    />
+                  ))}
+                </div>
+
+                {/* Talk Moves & Grouping Tips */}
+                <TalkMovesPanel
+                  talkMoves={result.talk_moves}
+                  groupingTip={result.grouping_tip}
+                />
+              </div>
+            )}
           </div>
         )}
+
+        {/* View 2: Live Class Tracker Dashboard */}
+        {activeMode === 'live_class_board' && (
+          <LiveClassDashboard
+            selectedAssignmentId={selectedDashboardAssignmentId}
+            onBackToStudio={() => setActiveMode('diffuse_studio')}
+            onOpenStudentView={handleOpenStudentViewForCode}
+          />
+        )}
+
+        {/* View 3: Student Join Portal */}
+        {activeMode === 'student_portal' && (
+          <StudentClassPortal
+            initialCode={studentPortalCode}
+            onBackToStudio={() => setActiveMode('diffuse_studio')}
+            onOpenTeacherDashboard={(id) => {
+              setSelectedDashboardAssignmentId(id);
+              setActiveMode('live_class_board');
+            }}
+          />
+        )}
+
+        {/* Assign to Class Modal */}
+        <TeacherAssignModal
+          isOpen={isAssignModalOpen}
+          onClose={() => setIsAssignModalOpen(false)}
+          result={result}
+          onAssignmentCreated={handleAssignmentCreated}
+          onViewDashboard={handleViewDashboardForAssignment}
+        />
 
         {/* Interactive Worksheet Export Modal */}
         <ExportModal
@@ -373,3 +492,4 @@ export default function App() {
     </div>
   );
 }
+
