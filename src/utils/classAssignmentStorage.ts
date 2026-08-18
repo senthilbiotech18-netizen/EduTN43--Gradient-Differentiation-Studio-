@@ -124,7 +124,7 @@ export function getAssignmentById(id: string): ClassAssignment | null {
   return all.find((a) => a.id === id) || null;
 }
 
-function saveClassAssignmentLocal(assignment: ClassAssignment) {
+export function saveClassAssignmentLocal(assignment: ClassAssignment) {
   const all = getAllAssignments();
   const existingIdx = all.findIndex((a) => a.id === assignment.id || a.code.toUpperCase() === assignment.code.toUpperCase());
 
@@ -137,6 +137,111 @@ function saveClassAssignmentLocal(assignment: ClassAssignment) {
   }
 
   localStorage.setItem(ASSIGNMENTS_STORAGE_KEY, JSON.stringify(updatedList));
+}
+
+// Encode assignment into portable, URL-safe base64 string
+export function encodeAssignmentPayload(assignment: ClassAssignment): string {
+  try {
+    const minified = {
+      id: assignment.id,
+      code: assignment.code,
+      title: assignment.title,
+      context: assignment.context,
+      teacherName: assignment.teacherName,
+      curriculum: assignment.curriculum,
+      gradeLevel: assignment.gradeLevel,
+      axis: assignment.axis,
+      originalTask: assignment.originalTask,
+      lanes: assignment.lanes,
+      talk_moves: assignment.talk_moves,
+      grouping_tip: assignment.grouping_tip,
+      allowSelfSelection: assignment.allowSelfSelection,
+      createdAt: assignment.createdAt
+    };
+    const json = JSON.stringify(minified);
+    const utf8Bytes = new TextEncoder().encode(json);
+    let binary = '';
+    for (let i = 0; i < utf8Bytes.length; i++) {
+      binary += String.fromCharCode(utf8Bytes[i]);
+    }
+    return btoa(binary);
+  } catch (e) {
+    return encodeURIComponent(JSON.stringify(assignment));
+  }
+}
+
+// Decode assignment from portable base64 string
+export function decodeAssignmentPayload(payload: string): ClassAssignment | null {
+  if (!payload || typeof payload !== 'string') return null;
+  const clean = payload.trim();
+  try {
+    let json = '';
+    try {
+      const binary = atob(clean);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      json = new TextDecoder().decode(bytes);
+    } catch {
+      json = decodeURIComponent(clean);
+    }
+    const parsed = JSON.parse(json);
+    if (parsed && parsed.code && Array.isArray(parsed.lanes)) {
+      return parsed as ClassAssignment;
+    }
+  } catch (e) {
+    console.error('Failed to decode assignment payload:', e);
+  }
+  return null;
+}
+
+// Generate self-contained direct URL that works anywhere (Vercel, LMS, Chromebook, mobile)
+export function getStudentDirectUrlWithPayload(assignment: ClassAssignment): string {
+  if (typeof window === 'undefined') return '';
+  const origin = window.location.origin + window.location.pathname;
+  const payload = encodeAssignmentPayload(assignment);
+  return `${origin}?code=${encodeURIComponent(assignment.code)}&taskData=${encodeURIComponent(payload)}&mode=student`;
+}
+
+// Import assignment from direct link or raw payload string
+export function importAssignmentFromShareString(input: string): ClassAssignment | null {
+  if (!input) return null;
+  const trimmed = input.trim();
+
+  // 1. If it's a full URL with taskData
+  if (trimmed.includes('taskData=')) {
+    try {
+      const url = new URL(trimmed.startsWith('http') ? trimmed : `https://example.com/${trimmed}`);
+      const taskData = url.searchParams.get('taskData');
+      if (taskData) {
+        const decoded = decodeAssignmentPayload(taskData);
+        if (decoded) {
+          saveClassAssignmentLocal(decoded);
+          return decoded;
+        }
+      }
+    } catch (e) {
+      // Not a valid URL, try regex
+      const match = trimmed.match(/taskData=([^&]+)/);
+      if (match && match[1]) {
+        const decoded = decodeAssignmentPayload(decodeURIComponent(match[1]));
+        if (decoded) {
+          saveClassAssignmentLocal(decoded);
+          return decoded;
+        }
+      }
+    }
+  }
+
+  // 2. Try raw payload directly
+  const rawDecoded = decodeAssignmentPayload(trimmed);
+  if (rawDecoded) {
+    saveClassAssignmentLocal(rawDecoded);
+    return rawDecoded;
+  }
+
+  return null;
 }
 
 export function saveClassAssignment(assignment: ClassAssignment): ClassAssignment {

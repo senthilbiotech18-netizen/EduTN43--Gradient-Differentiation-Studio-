@@ -10,7 +10,8 @@ import {
   exportClassSubmissionsCsv,
   exportClassMasterDoc,
   exportStudentDossierDoc,
-  deleteClassAssignment
+  deleteClassAssignment,
+  getStudentDirectUrlWithPayload
 } from '../utils/classAssignmentStorage';
 import { 
   Users, 
@@ -128,8 +129,13 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
 
   const handleCopyDirectStudentLink = (code: string) => {
     if (typeof window !== 'undefined') {
-      const origin = window.location.origin + window.location.pathname;
-      const url = `${origin}?code=${code}&mode=student`;
+      let url = '';
+      if (activeAssignment) {
+        url = getStudentDirectUrlWithPayload(activeAssignment);
+      } else {
+        const origin = window.location.origin + window.location.pathname;
+        url = `${origin}?code=${encodeURIComponent(code)}&mode=student`;
+      }
       navigator.clipboard.writeText(url);
       setCopiedStudentLink(true);
       setTimeout(() => setCopiedStudentLink(false), 2500);

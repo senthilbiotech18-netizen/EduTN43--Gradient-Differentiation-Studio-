@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { DiffusedResult, ClassAssignment } from '../types';
-import { generateAssignmentCode, saveClassAssignment } from '../utils/classAssignmentStorage';
+import { generateAssignmentCode, saveClassAssignment, getStudentDirectUrlWithPayload } from '../utils/classAssignmentStorage';
 import { 
   Users, 
   Copy, 
@@ -75,12 +75,6 @@ export const TeacherAssignModal: React.FC<TeacherAssignModalProps> = ({
     onAssignmentCreated(newAssignment);
   };
 
-  const getStudentDirectUrl = (code: string) => {
-    if (typeof window === 'undefined') return '';
-    const origin = window.location.origin + window.location.pathname;
-    return `${origin}?code=${code}&mode=student`;
-  };
-
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code);
     setCopiedCode(true);
@@ -88,7 +82,13 @@ export const TeacherAssignModal: React.FC<TeacherAssignModalProps> = ({
   };
 
   const handleCopyLink = (code: string) => {
-    const url = getStudentDirectUrl(code);
+    let url = '';
+    if (createdAssignment) {
+      url = getStudentDirectUrlWithPayload(createdAssignment);
+    } else {
+      const origin = typeof window !== 'undefined' ? window.location.origin + window.location.pathname : '';
+      url = `${origin}?code=${code}&mode=student`;
+    }
     navigator.clipboard.writeText(url);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2500);

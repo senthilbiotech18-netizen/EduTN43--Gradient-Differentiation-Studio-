@@ -101,9 +101,19 @@ export default function App() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const codeParam = params.get('code');
+      const taskDataParam = params.get('taskData') || params.get('data');
       const modeParam = params.get('mode');
 
-      if (codeParam) {
+      if (taskDataParam) {
+        import('./utils/classAssignmentStorage').then(({ decodeAssignmentPayload, saveClassAssignmentLocal }) => {
+          const decoded = decodeAssignmentPayload(taskDataParam);
+          if (decoded) {
+            saveClassAssignmentLocal(decoded);
+            setStudentPortalCode(decoded.code);
+            setPortalMode('student');
+          }
+        });
+      } else if (codeParam) {
         setStudentPortalCode(codeParam);
         setPortalMode('student');
       } else if (modeParam === 'teacher' || modeParam === 'diffuse_studio') {

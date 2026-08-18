@@ -12,7 +12,10 @@ import {
   getAssignmentByCodeAsync,
   getAllAssignments, 
   getAllAssignmentsAsync,
-  saveClassSubmission 
+  saveClassSubmission,
+  saveClassAssignmentLocal,
+  importAssignmentFromShareString,
+  decodeAssignmentPayload
 } from '../utils/classAssignmentStorage';
 import { getStoredApiKey } from '../utils/apiKeyUtils';
 import { markResponseDirect } from '../utils/geminiClient';
@@ -68,7 +71,29 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
   const [searchError, setSearchError] = useState<string>('');
   const [recentAssignments, setRecentAssignments] = useState<ClassAssignment[]>(getAllAssignments());
 
+  const [pasteLinkInput, setPasteLinkInput] = useState<string>('');
+  const [showPasteLinkModal, setShowPasteLinkModal] = useState<boolean>(false);
+
   useEffect(() => {
+    // Check URL parameters for taskData on mount
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const taskDataParam = params.get('taskData') || params.get('data');
+      if (taskDataParam) {
+        const decoded = decodeAssignmentPayload(taskDataParam);
+        if (decoded) {
+          saveClassAssignmentLocal(decoded);
+          setActiveAssignment(decoded);
+          setSelectedTier('Core');
+          if (decoded.curriculum && decoded.curriculum in CURRICULUM_CONFIGS) {
+            setCurriculum(decoded.curriculum as CurriculumType);
+            if (decoded.gradeLevel) setGradeLevel(decoded.gradeLevel);
+          }
+          return;
+        }
+      }
+    }
+
     // Sync latest assignments from server
     getAllAssignmentsAsync().then((list) => {
       if (list && list.length > 0) {
@@ -90,6 +115,24 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
   const handleFindAssignment = async (codeToSearch: string) => {
     setSearchError('');
     setIsSearching(true);
+
+    // 1. Check if the input is a full Direct Link or Task Data Payload
+    if (codeToSearch.includes('taskData=') || codeToSearch.length > 30) {
+      const imported = importAssignmentFromShareString(codeToSearch);
+      if (imported) {
+        setActiveAssignment(imported);
+        setSelectedTier('Core');
+        if (imported.curriculum && imported.curriculum in CURRICULUM_CONFIGS) {
+          setCurriculum(imported.curriculum as CurriculumType);
+          if (imported.gradeLevel) setGradeLevel(imported.gradeLevel);
+        }
+        setIsSubmittedSuccess(false);
+        setSubmissionFeedback(null);
+        setIsSearching(false);
+        return;
+      }
+    }
+
     try {
       const found = await getAssignmentByCodeAsync(codeToSearch);
       if (found) {
@@ -105,7 +148,7 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
         setSubmissionFeedback(null);
       } else {
         setActiveAssignment(null);
-        setSearchError(`No active assignment found for PIN "${codeToSearch}". Please check with your teacher.`);
+        setSearchError(`No active assignment found for PIN "${codeToSearch}". If your teacher shared a Direct Link, paste it below or click the link to load directly.`);
       }
     } catch (e) {
       const localFound = getAssignmentByCode(codeToSearch);
@@ -122,10 +165,29 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
         setSubmissionFeedback(null);
       } else {
         setActiveAssignment(null);
-        setSearchError(`Could not find assignment for PIN "${codeToSearch}". Please check the code and try again.`);
+        setSearchError(`Could not find assignment for PIN "${codeToSearch}". If this task was created on another device, paste the teacher's Direct Link below.`);
       }
     } finally {
       setIsSearching(false);
+    }
+  };
+
+  const handleImportSharedLink = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pasteLinkInput.trim()) return;
+    const imported = importAssignmentFromShareString(pasteLinkInput.trim());
+    if (imported) {
+      setActiveAssignment(imported);
+      setSelectedTier('Core');
+      if (imported.curriculum && imported.curriculum in CURRICULUM_CONFIGS) {
+        setCurriculum(imported.curriculum as CurriculumType);
+        if (imported.gradeLevel) setGradeLevel(imported.gradeLevel);
+      }
+      setSearchError('');
+      setPasteLinkInput('');
+      setShowPasteLinkModal(false);
+    } else {
+      setSearchError('Invalid task link or share code format. Please copy the complete direct link from your teacher.');
     }
   };
 
@@ -321,8 +383,37 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
               </div>
 
               {searchError && (
-                <div className="text-xs font-mono text-rose-600 bg-rose-50 border border-rose-200 p-3 rounded-xl">
-                  {searchError}
+                <div className="text-xs font-serif text-slate-700 bg-amber-50 border border-amber-200 p-4 rounded-2xl space-y-3 text-left">
+                  <div className="flex items-start gap-2">
+                    <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-sans font-bold text-amber-900">Task PIN Not Found in this Browser Session</p>
+                      <p className="text-xs mt-1 text-slate-600">{searchError}</p>
+                    </div>
+                  </div>
+
+                  {/* Paste Direct Link Box */}
+                  <div className="pt-2 border-t border-amber-200/60">
+                    <label className="block font-mono text-[11px] uppercase tracking-wider text-slate-700 font-bold mb-1.5">
+                      📎 Paste Teacher's Direct Link or Share Code:
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={pasteLinkInput}
+                        onChange={(e) => setPasteLinkInput(e.target.value)}
+                        placeholder="Paste the full link copied from teacher..."
+                        className="flex-1 text-xs font-mono bg-white border border-amber-300 rounded-xl px-3 py-2 text-slate-900 focus:outline-indigo-600"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleImportSharedLink}
+                        className="font-sans font-bold text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-xl transition-all cursor-pointer whitespace-nowrap"
+                      >
+                        Load Task
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -335,6 +426,77 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
                 {isSearching ? 'Loading Task...' : 'Open Differentiated Task →'}
               </button>
             </form>
+
+            {/* Toggle to paste direct link manually */}
+            {!searchError && (
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowPasteLinkModal(!showPasteLinkModal)}
+                  className="font-mono text-xs text-indigo-600 hover:text-indigo-800 underline inline-flex items-center gap-1 cursor-pointer"
+                >
+                  {showPasteLinkModal ? 'Hide Link Input' : 'Have a Direct Share Link / Code? Click here to paste'}
+                </button>
+
+                {showPasteLinkModal && (
+                  <div className="mt-3 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-left space-y-2 animate-fadeIn">
+                    <label className="block font-mono text-[11px] uppercase tracking-wider text-slate-700 font-bold">
+                      Paste Direct Task Link or Share Code:
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={pasteLinkInput}
+                        onChange={(e) => setPasteLinkInput(e.target.value)}
+                        placeholder="Paste link starting with https:// or share code..."
+                        className="flex-1 text-xs font-mono bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 focus:outline-indigo-600"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleImportSharedLink}
+                        className="font-sans font-bold text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-xl transition-all cursor-pointer whitespace-nowrap"
+                      >
+                        Load Task
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Available / Sample Tasks on this device */}
+            {recentAssignments.length > 0 && (
+              <div className="pt-4 border-t border-slate-100 text-left space-y-2">
+                <span className="font-mono text-[11px] uppercase tracking-wider text-slate-500 font-bold block">
+                  Available Classroom Tasks ({recentAssignments.length}):
+                </span>
+                <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto pr-1">
+                  {recentAssignments.slice(0, 4).map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => {
+                        setInputCode(a.code);
+                        handleFindAssignment(a.code);
+                      }}
+                      className="p-2.5 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-xl text-left transition-all cursor-pointer flex items-center justify-between group"
+                    >
+                      <div className="truncate mr-2">
+                        <div className="font-sans font-bold text-xs text-slate-900 group-hover:text-indigo-900 truncate">
+                          {a.title}
+                        </div>
+                        <div className="font-mono text-[10px] text-slate-500 truncate">
+                          {a.curriculum ? `${a.curriculum} • ${a.gradeLevel || ''}` : a.context}
+                        </div>
+                      </div>
+                      <span className="font-mono font-extrabold text-xs bg-indigo-100 text-indigo-800 px-2 py-1 rounded-md shrink-0">
+                        {a.code}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="pt-2 border-t border-slate-100 flex items-center justify-center gap-2 text-slate-400 font-mono text-[11px]">
               <span>🔒 Student Isolated Session</span>
