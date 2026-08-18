@@ -194,22 +194,23 @@ export const LaneCard: React.FC<LaneCardProps> = ({
             </div>
           )}
 
-          {/* Action Bar: Mark & Download Options */}
+          {/* Action Bar: Submit for Marking Response & Download Work */}
           <div className="pt-2 flex flex-wrap items-center justify-between gap-2">
             <button
               onClick={() => onMarkAnswer(index)}
               disabled={isMarking || !studentAnswer.answerText.trim()}
-              className="inline-flex items-center gap-1.5 font-mono text-xs font-bold uppercase tracking-wider bg-white border border-indigo-600 text-indigo-600 hover:bg-indigo-600 hover:text-white px-3.5 py-2 rounded-xl transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-2xs"
+              className="inline-flex items-center gap-1.5 font-mono text-xs font-bold uppercase tracking-wider bg-white border-2 border-indigo-600 text-indigo-700 hover:bg-indigo-600 hover:text-white px-3.5 py-2 rounded-xl transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-xs hover:shadow-md"
+              title="Submit student work for AI formative marking and feedback"
             >
               {isMarking ? (
                 <>
-                  <Sparkles className="w-3.5 h-3.5 animate-spin" />
-                  Marking...
+                  <Sparkles className="w-3.5 h-3.5 animate-spin text-indigo-600 group-hover:text-white" />
+                  Submitting &amp; Marking...
                 </>
               ) : (
                 <>
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  Mark Response
+                  <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600 hover:text-white" />
+                  Submit for Marking Response
                 </>
               )}
             </button>
@@ -219,7 +220,8 @@ export const LaneCard: React.FC<LaneCardProps> = ({
               <button
                 type="button"
                 onClick={() => setShowExportMenu(!showExportMenu)}
-                className="inline-flex items-center gap-1.5 font-sans text-xs font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3.5 py-2 rounded-xl shadow-2xs transition-all cursor-pointer"
+                className="inline-flex items-center gap-1.5 font-sans text-xs font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3.5 py-2 rounded-xl shadow-2xs hover:shadow-sm transition-all cursor-pointer"
+                title="Download student response, question, and marks"
               >
                 <Download className="w-3.5 h-3.5" />
                 Download Work
@@ -227,9 +229,9 @@ export const LaneCard: React.FC<LaneCardProps> = ({
               </button>
 
               {showExportMenu && (
-                <div className="absolute right-0 bottom-full mb-2 w-56 rounded-xl bg-white border border-slate-200 shadow-xl z-20 py-1 font-sans text-xs">
+                <div className="absolute right-0 bottom-full mb-2 w-56 rounded-xl bg-white border border-slate-200 shadow-xl z-20 py-1 font-sans text-xs animate-fadeIn">
                   <div className="px-3 py-1.5 font-mono text-[10px] uppercase text-slate-500 border-b border-slate-100 font-semibold">
-                    Export {lane.tier} Work
+                    Download {lane.tier} Work Package
                   </div>
 
                   <button
@@ -286,7 +288,7 @@ export const LaneCard: React.FC<LaneCardProps> = ({
                     className="w-full text-left px-3 py-2 text-slate-600 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
                   >
                     <Printer className="w-3.5 h-3.5" />
-                    Print / Save as PDF via Browser
+                    Print / Save via Browser
                   </button>
                 </div>
               )}
@@ -295,18 +297,21 @@ export const LaneCard: React.FC<LaneCardProps> = ({
 
           {/* Marking Feedback Display */}
           {feedback && (
-            <div className="mt-3 p-3.5 rounded-xl bg-indigo-50/50 border border-indigo-100 space-y-2 animate-fadeIn">
+            <div className="mt-3 p-3.5 rounded-xl bg-indigo-50/70 border border-indigo-200 space-y-2 animate-fadeIn shadow-2xs">
               <div className="flex items-center justify-between">
-                <span className={`inline-block font-mono text-[10px] uppercase font-bold tracking-wider px-2.5 py-1 rounded-full ${tierStyles.badgeBg} ${tierStyles.badgeText}`}>
-                  {feedback.level}
-                </span>
-                <span className="font-mono text-[10px] text-slate-500">
-                  AI Formative Assessment
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className={`inline-block font-mono text-[10px] uppercase font-bold tracking-wider px-2.5 py-0.5 rounded-full ${tierStyles.badgeBg} ${tierStyles.badgeText}`}>
+                    Level: {feedback.level}
+                  </span>
+                </div>
+                <span className="font-mono text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  Marked &amp; Recorded
                 </span>
               </div>
 
               <div>
-                <span className="font-mono text-[10px] uppercase tracking-wider text-slate-600 font-bold block">
+                <span className="font-mono text-[10px] uppercase tracking-wider text-emerald-800 font-bold block">
                   Strength
                 </span>
                 <p className="font-serif text-xs text-slate-900 leading-relaxed">
@@ -315,8 +320,8 @@ export const LaneCard: React.FC<LaneCardProps> = ({
               </div>
 
               <div>
-                <span className="font-mono text-[10px] uppercase tracking-wider text-slate-600 font-bold block">
-                  Next Step
+                <span className="font-mono text-[10px] uppercase tracking-wider text-indigo-800 font-bold block">
+                  Growth Next Step
                 </span>
                 <p className="font-serif text-xs text-slate-900 leading-relaxed">
                   {feedback.next_step}
@@ -328,7 +333,7 @@ export const LaneCard: React.FC<LaneCardProps> = ({
                   <span className="font-mono text-[10px] uppercase tracking-wider text-slate-600 font-bold block">
                     Commentary
                   </span>
-                  <p className="font-serif text-xs text-slate-600 italic leading-relaxed">
+                  <p className="font-serif text-xs text-slate-700 italic leading-relaxed">
                     "{feedback.detailed_feedback}"
                   </p>
                 </div>

@@ -23,7 +23,7 @@ import { downloadTeacherMasterDoc } from './utils/exportUtils';
 import { getStoredApiKey } from './utils/apiKeyUtils';
 import { diffuseTaskDirect, markResponseDirect } from './utils/geminiClient';
 import { generateSmartFallback } from './utils/fallbackGenerator';
-import { getAllAssignments, saveClassAssignment } from './utils/classAssignmentStorage';
+import { getAllAssignments, saveClassAssignment, saveClassSubmission } from './utils/classAssignmentStorage';
 import { Download, Layers, Sparkles, CheckCircle2, Users, Share2, ArrowRight } from 'lucide-react';
 
 async function safeFetchApi<T = any>(url: string, options: RequestInit): Promise<T> {
@@ -279,6 +279,22 @@ export default function App() {
           markedAt: new Date().toISOString(),
         },
       }));
+
+      // Automatically store and sync the response into classroom records
+      try {
+        saveClassSubmission({
+          id: `studio_sub_${lane.tier}_${Date.now()}`,
+          assignmentId: result.id,
+          assignmentCode: 'STUDIO-TASK',
+          studentName: answer.studentName?.trim() || `Student (${lane.tier} Tier)`,
+          tier: lane.tier,
+          answerText: answer.answerText.trim(),
+          submittedAt: new Date().toISOString(),
+          feedback: feedbackData,
+        });
+      } catch (saveErr) {
+        console.warn('Could not save studio submission record:', saveErr);
+      }
     } catch (err: any) {
       console.error(err);
       alert('Could not mark response at this time. Please check your network connection or API Key.');

@@ -15,7 +15,7 @@ import {
 } from '../utils/classAssignmentStorage';
 import { getStoredApiKey } from '../utils/apiKeyUtils';
 import { markResponseDirect } from '../utils/geminiClient';
-import { downloadStudentWorkPDF, downloadStudentWorkDoc } from '../utils/exportUtils';
+import { downloadStudentWorkPDF, downloadStudentWorkDoc, downloadStudentWorkMarkdown } from '../utils/exportUtils';
 import { 
   Users, 
   PenTool, 
@@ -30,7 +30,11 @@ import {
   BookOpen, 
   HelpCircle,
   Lightbulb,
-  FileCheck
+  FileCheck,
+  ChevronDown,
+  FileCode,
+  FileText,
+  Printer
 } from 'lucide-react';
 
 interface StudentClassPortalProps {
@@ -532,36 +536,52 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
                 </div>
 
                 <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3">
-                  <button
-                    type="submit"
-                    disabled={isSubmitting || !answerText.trim() || !studentName.trim()}
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 font-sans font-bold text-sm bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-7 py-3.5 rounded-2xl shadow-md hover:shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 cursor-pointer"
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <Sparkles className="w-4 h-4 animate-spin" />
-                        Submitting to Teacher &amp; Running Assessment...
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-4 h-4" />
-                        Submit Work to Teacher →
-                      </>
+                  <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                    <button
+                      type="submit"
+                      disabled={isSubmitting || !answerText.trim() || !studentName.trim()}
+                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 font-sans font-bold text-sm bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-7 py-3.5 rounded-2xl shadow-md hover:shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+                      title="Submit your work to your teacher and receive instant AI formative marks"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Sparkles className="w-4 h-4 animate-spin" />
+                          Submitting &amp; Marking Response...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="w-4 h-4" />
+                          Submit for Marking Response →
+                        </>
+                      )}
+                    </button>
+
+                    {currentPackage && (
+                      <button
+                        type="button"
+                        onClick={() => downloadStudentWorkPDF(currentPackage)}
+                        disabled={!answerText.trim()}
+                        className="inline-flex items-center gap-1.5 font-sans font-semibold text-xs bg-white text-indigo-700 border border-slate-300 hover:bg-slate-50 px-4 py-3 rounded-2xl transition-all cursor-pointer shadow-2xs disabled:opacity-40"
+                        title="Download your work as PDF"
+                      >
+                        <Download className="w-3.5 h-3.5 text-blue-600" />
+                        Download Work (.pdf)
+                      </button>
                     )}
-                  </button>
+                  </div>
 
                   {isSubmittedSuccess && (
                     <div className="inline-flex items-center gap-1.5 text-xs font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl">
                       <FileCheck className="w-4 h-4 text-emerald-600" />
-                      Successfully delivered to Teacher's Class Dashboard!
+                      Marked &amp; Delivered to Teacher Dashboard!
                     </div>
                   )}
                 </div>
               </form>
 
-              {/* Formative Feedback & Download Section */}
+              {/* Formative Feedback & Comprehensive Download Section */}
               {submissionFeedback && currentPackage && (
-                <div className="bg-gradient-to-br from-indigo-50 via-purple-50 to-slate-50 border border-indigo-200 rounded-3xl p-6 space-y-4 animate-fadeIn">
+                <div className="bg-gradient-to-br from-indigo-50 via-purple-50 to-slate-50 border border-indigo-200 rounded-3xl p-6 space-y-5 animate-fadeIn">
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-5 h-5 text-indigo-600" />
@@ -600,26 +620,42 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
                     </div>
                   )}
 
-                  {/* Student Download Actions */}
-                  <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-indigo-100">
-                    <span className="font-mono text-xs text-slate-500">
-                      Save a copy of your completed work package:
+                  {/* Student Download Actions Bar */}
+                  <div className="pt-3 flex flex-wrap items-center justify-between gap-3 border-t border-indigo-200/80">
+                    <span className="font-mono text-xs text-indigo-950 font-medium">
+                      Download your marked worksheet package:
                     </span>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         onClick={() => downloadStudentWorkPDF(currentPackage)}
-                        className="inline-flex items-center gap-1.5 font-sans font-semibold text-xs bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50 px-3 py-2 rounded-xl transition-all cursor-pointer shadow-2xs"
+                        className="inline-flex items-center gap-1.5 font-sans font-semibold text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-xl transition-all cursor-pointer shadow-xs"
                       >
-                        <Download className="w-3.5 h-3.5 text-blue-600" />
-                        Download PDF
+                        <Download className="w-3.5 h-3.5" />
+                        Download PDF (.pdf)
                       </button>
 
                       <button
                         onClick={() => downloadStudentWorkDoc(currentPackage)}
-                        className="inline-flex items-center gap-1.5 font-sans font-semibold text-xs bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50 px-3 py-2 rounded-xl transition-all cursor-pointer shadow-2xs"
+                        className="inline-flex items-center gap-1.5 font-sans font-semibold text-xs bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50 px-3.5 py-2 rounded-xl transition-all cursor-pointer shadow-2xs"
                       >
-                        <Download className="w-3.5 h-3.5 text-indigo-600" />
+                        <FileCode className="w-3.5 h-3.5 text-indigo-600" />
                         Download Word (.doc)
+                      </button>
+
+                      <button
+                        onClick={() => downloadStudentWorkMarkdown(currentPackage)}
+                        className="inline-flex items-center gap-1.5 font-sans font-semibold text-xs bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50 px-3.5 py-2 rounded-xl transition-all cursor-pointer shadow-2xs"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-purple-600" />
+                        Markdown (.md)
+                      </button>
+
+                      <button
+                        onClick={() => window.print()}
+                        className="inline-flex items-center gap-1.5 font-sans font-semibold text-xs bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 px-3.5 py-2 rounded-xl transition-all cursor-pointer shadow-2xs"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        Print
                       </button>
                     </div>
                   </div>
