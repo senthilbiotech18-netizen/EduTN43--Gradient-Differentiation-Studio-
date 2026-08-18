@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
@@ -13,7 +14,40 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '5mb' }));
+
+// In-Memory & File-backed persistence for classroom assignments & submissions
+const DATA_FILE = path.join(process.cwd(), '.classroom_store.json');
+
+interface StoredData {
+  assignments: Record<string, any>;
+  submissions: Record<string, any[]>;
+}
+
+let store: StoredData = {
+  assignments: {},
+  submissions: {}
+};
+
+// Load existing data from file if present
+try {
+  if (fs.existsSync(DATA_FILE)) {
+    const raw = fs.readFileSync(DATA_FILE, 'utf-8');
+    store = JSON.parse(raw);
+    console.log(`Loaded ${Object.keys(store.assignments || {}).length} assignments from storage file.`);
+  }
+} catch (err) {
+  console.warn('Could not read persistent store file, initializing empty store:', err);
+  store = { assignments: {}, submissions: {} };
+}
+
+function persistStore() {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(store, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error persisting classroom store:', err);
+  }
+}
 
 // Lazy Gemini AI helper
 function getGemini(customKey?: string): GoogleGenAI | null {
@@ -136,9 +170,150 @@ function generateSmartFallback(task: string, context?: string, axis?: string) {
   };
 }
 
-// API Routes
+// ----------------------------------------------------
+// CLASSROOM ASSIGNMENTS & LIVE SUBMISSIONS API ROUTES
+// ----------------------------------------------------
+
+// List all assignments
+app.get('/api/assignments', (_req, res) => {
+  const list = Object.values(store.assignments || {}).sort((a: any, b: any) => {
+    return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+  });
+  res.json({ assignments: list });
+});
+
+// Lookup assignment by PIN Code or ID (case-insensitive)
+app.get('/api/assignments/:code', (req, res) => {
+  const rawCode = req.params.code || '';
+  const searchNormalized = rawCode.trim().toUpperCase().replace(/\s+/g, '-');
+  
+  const assignments = Object.values(store.assignments || {});
+  const found = assignments.find((a: any) => {
+    const code = (a.code || '').trim().toUpperCase().replace(/\s+/g, '-');
+    return code === searchNormalized || a.id === rawCode;
+  });
+
+  if (!found) {
+    return res.status(404).json({ error: `Assignment not found for code "${rawCode}".` });
+  }
+
+  return res.json({ assignment: found });
+});
+
+// Create or update class assignment
+app.post('/api/assignments', (req, res) => {
+  const assignment = req.body;
+  if (!assignment || !assignment.code || !assignment.lanes) {
+    return res.status(400).json({ error: 'Invalid assignment data provided.' });
+  }
+
+  // Normalize code and id
+  const normalizedCode = assignment.code.trim().toUpperCase().replace(/\s+/g, '-');
+  const assignmentId = assignment.id || `assign_${Date.now()}`;
+  
+  const savedAssignment = {
+    ...assignment,
+    id: assignmentId,
+    code: normalizedCode,
+    updatedAt: new Date().toISOString()
+  };
+
+  store.assignments[assignmentId] = savedAssignment;
+  if (!store.submissions[assignmentId]) {
+    store.submissions[assignmentId] = [];
+  }
+  
+  persistStore();
+  console.log(`Saved assignment [${normalizedCode}] ${savedAssignment.title}`);
+  return res.json({ assignment: savedAssignment });
+});
+
+// Delete an assignment
+app.delete('/api/assignments/:id', (req, res) => {
+  const id = req.params.id;
+  delete store.assignments[id];
+  delete store.submissions[id];
+  persistStore();
+  return res.json({ success: true });
+});
+
+// Get submissions for an assignment
+app.get('/api/assignments/:id/submissions', (req, res) => {
+  const id = req.params.id;
+  let submissions = store.submissions[id] || [];
+
+  // Also check if ID passed was actually a PIN code
+  if (submissions.length === 0) {
+    const codeNormalized = id.trim().toUpperCase().replace(/\s+/g, '-');
+    const assignment = Object.values(store.assignments || {}).find((a: any) => 
+      (a.code || '').toUpperCase() === codeNormalized
+    );
+    if (assignment && store.submissions[assignment.id]) {
+      submissions = store.submissions[assignment.id];
+    }
+  }
+
+  return res.json({ submissions });
+});
+
+// Submit student work for an assignment code or ID
+app.post('/api/assignments/:code/submissions', (req, res) => {
+  const rawCode = req.params.code || '';
+  const searchNormalized = rawCode.trim().toUpperCase().replace(/\s+/g, '-');
+  const submission = req.body;
+
+  if (!submission || !submission.studentName || !submission.answerText) {
+    return res.status(400).json({ error: 'Student name and response are required.' });
+  }
+
+  // Find assignment
+  let targetAssignment = store.assignments[rawCode];
+  if (!targetAssignment) {
+    targetAssignment = Object.values(store.assignments || {}).find((a: any) => {
+      const code = (a.code || '').trim().toUpperCase().replace(/\s+/g, '-');
+      return code === searchNormalized || a.id === rawCode;
+    });
+  }
+
+  const assignmentId = targetAssignment ? targetAssignment.id : (submission.assignmentId || rawCode);
+  const assignmentCode = targetAssignment ? targetAssignment.code : searchNormalized;
+
+  if (!store.submissions[assignmentId]) {
+    store.submissions[assignmentId] = [];
+  }
+
+  const subId = submission.id || `sub_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+  const savedSubmission = {
+    ...submission,
+    id: subId,
+    assignmentId,
+    assignmentCode,
+    submittedAt: submission.submittedAt || new Date().toISOString()
+  };
+
+  // Replace or append
+  const existingIdx = store.submissions[assignmentId].findIndex((s: any) => s.id === subId);
+  if (existingIdx >= 0) {
+    store.submissions[assignmentId][existingIdx] = savedSubmission;
+  } else {
+    store.submissions[assignmentId].unshift(savedSubmission);
+  }
+
+  persistStore();
+  console.log(`Received student submission from [${savedSubmission.studentName}] for class [${assignmentCode}]`);
+  return res.json({ submission: savedSubmission });
+});
+
+// ----------------------------------------------------
+// CORE AI DIFFERENTIATION & MARKING ROUTES
+// ----------------------------------------------------
+
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', hasGeminiKey: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY') });
+  res.json({ 
+    status: 'ok', 
+    hasGeminiKey: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY'),
+    assignmentsCount: Object.keys(store.assignments || {}).length
+  });
 });
 
 app.post('/api/test-key', async (req, res) => {
@@ -335,4 +510,5 @@ async function startServer() {
 }
 
 startServer();
+
 

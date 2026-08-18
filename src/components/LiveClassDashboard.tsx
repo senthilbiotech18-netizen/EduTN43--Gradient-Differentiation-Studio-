@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { ClassAssignment, ClassSubmission, TierType } from '../types';
 import { 
   getAllAssignments, 
+  getAllAssignmentsAsync,
   getSubmissionsForAssignment, 
+  fetchRemoteSubmissions,
   subscribeToClassUpdates,
   exportClassSubmissionsCsv,
   exportClassMasterDoc,
@@ -51,8 +53,9 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
   const [activeDetailSubmission, setActiveDetailSubmission] = useState<ClassSubmission | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState<string>(new Date().toLocaleTimeString());
 
-  const refreshData = () => {
-    const all = getAllAssignments();
+  const refreshData = async () => {
+    // 1. Fetch live assignments from backend server
+    const all = await getAllAssignmentsAsync();
     setAssignments(all);
 
     let current = activeAssignment;
@@ -66,7 +69,8 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
 
     setActiveAssignment(current);
     if (current) {
-      setSubmissions(getSubmissionsForAssignment(current.id));
+      const subs = await fetchRemoteSubmissions(current.id);
+      setSubmissions(subs);
     } else {
       setSubmissions([]);
     }
@@ -78,12 +82,22 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
     const unsubscribe = subscribeToClassUpdates(() => {
       refreshData();
     });
-    return () => unsubscribe();
+
+    // Also poll every 10 seconds for student submissions
+    const interval = setInterval(() => {
+      refreshData();
+    }, 10000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
   }, [selectedAssignmentId]);
 
-  const handleSelectAssignment = (assign: ClassAssignment) => {
+  const handleSelectAssignment = async (assign: ClassAssignment) => {
     setActiveAssignment(assign);
-    setSubmissions(getSubmissionsForAssignment(assign.id));
+    const subs = await fetchRemoteSubmissions(assign.id);
+    setSubmissions(subs);
   };
 
   const handleCopyCode = (code: string) => {

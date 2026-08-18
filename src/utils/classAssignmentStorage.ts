@@ -67,10 +67,56 @@ export function getAllAssignments(): ClassAssignment[] {
   }
 }
 
+export async function getAllAssignmentsAsync(): Promise<ClassAssignment[]> {
+  try {
+    const res = await fetch('/api/assignments');
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.assignments) && data.assignments.length > 0) {
+        // Merge with local storage
+        const local = getAllAssignments();
+        const serverMap = new Map<string, ClassAssignment>();
+        data.assignments.forEach((a: ClassAssignment) => serverMap.set(a.id, a));
+        local.forEach((a) => {
+          if (!serverMap.has(a.id)) serverMap.set(a.id, a);
+        });
+        const merged = Array.from(serverMap.values());
+        localStorage.setItem(ASSIGNMENTS_STORAGE_KEY, JSON.stringify(merged));
+        return merged;
+      }
+    }
+  } catch (e) {
+    console.warn('Could not reach assignments server, using local cache:', e);
+  }
+  return getAllAssignments();
+}
+
 export function getAssignmentByCode(code: string): ClassAssignment | null {
   const normalized = code.trim().toUpperCase().replace(/\s+/g, '-');
   const all = getAllAssignments();
   return all.find((a) => a.code.toUpperCase() === normalized || a.id === code) || null;
+}
+
+export async function getAssignmentByCodeAsync(code: string): Promise<ClassAssignment | null> {
+  const normalized = code.trim().toUpperCase().replace(/\s+/g, '-');
+  
+  // 1. Try server API first to ensure students on other devices get the live teacher's task
+  try {
+    const res = await fetch(`/api/assignments/${encodeURIComponent(normalized)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.assignment) {
+        // Cache assignment into local browser storage for offline resilience
+        saveClassAssignmentLocal(data.assignment);
+        return data.assignment;
+      }
+    }
+  } catch (e) {
+    console.warn('Network lookup for assignment failed, checking local cache:', e);
+  }
+
+  // 2. Fallback to local storage
+  return getAssignmentByCode(code);
 }
 
 export function getAssignmentById(id: string): ClassAssignment | null {
@@ -78,9 +124,9 @@ export function getAssignmentById(id: string): ClassAssignment | null {
   return all.find((a) => a.id === id) || null;
 }
 
-export function saveClassAssignment(assignment: ClassAssignment): ClassAssignment {
+function saveClassAssignmentLocal(assignment: ClassAssignment) {
   const all = getAllAssignments();
-  const existingIdx = all.findIndex((a) => a.id === assignment.id);
+  const existingIdx = all.findIndex((a) => a.id === assignment.id || a.code.toUpperCase() === assignment.code.toUpperCase());
 
   let updatedList: ClassAssignment[];
   if (existingIdx >= 0) {
@@ -91,7 +137,21 @@ export function saveClassAssignment(assignment: ClassAssignment): ClassAssignmen
   }
 
   localStorage.setItem(ASSIGNMENTS_STORAGE_KEY, JSON.stringify(updatedList));
+}
+
+export function saveClassAssignment(assignment: ClassAssignment): ClassAssignment {
+  saveClassAssignmentLocal(assignment);
   broadcastSync('assignment_created');
+
+  // Push to server asynchronously so students on other devices can access it immediately
+  fetch('/api/assignments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(assignment)
+  }).catch((err) => {
+    console.warn('Could not sync assignment to server backend:', err);
+  });
+
   return assignment;
 }
 
@@ -105,6 +165,10 @@ export function deleteClassAssignment(id: string): void {
   localStorage.setItem(SUBMISSIONS_STORAGE_KEY, JSON.stringify(subs));
 
   broadcastSync('assignment_updated');
+
+  fetch(`/api/assignments/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  }).catch((err) => console.warn('Could not delete assignment on server:', err));
 }
 
 export function getAllSubmissions(): ClassSubmission[] {
@@ -125,9 +189,30 @@ export function getSubmissionsForAssignment(assignmentId: string): ClassSubmissi
   return all.filter((s) => s.assignmentId === assignmentId);
 }
 
+export async function fetchRemoteSubmissions(assignmentId: string): Promise<ClassSubmission[]> {
+  try {
+    const res = await fetch(`/api/assignments/${encodeURIComponent(assignmentId)}/submissions`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.submissions)) {
+        // Merge with local storage
+        const local = getAllSubmissions();
+        const subMap = new Map<string, ClassSubmission>();
+        local.forEach((s) => subMap.set(s.id, s));
+        data.submissions.forEach((s: ClassSubmission) => subMap.set(s.id, s));
+        const merged = Array.from(subMap.values());
+        localStorage.setItem(SUBMISSIONS_STORAGE_KEY, JSON.stringify(merged));
+        return data.submissions;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to fetch remote submissions from server:', e);
+  }
+  return getSubmissionsForAssignment(assignmentId);
+}
+
 export function saveClassSubmission(submission: ClassSubmission): ClassSubmission {
   const all = getAllSubmissions();
-  // If student previously submitted, update or append
   const existingIdx = all.findIndex((s) => s.id === submission.id);
 
   let updated: ClassSubmission[];
@@ -140,6 +225,17 @@ export function saveClassSubmission(submission: ClassSubmission): ClassSubmissio
 
   localStorage.setItem(SUBMISSIONS_STORAGE_KEY, JSON.stringify(updated));
   broadcastSync('submission_added');
+
+  // Push to server asynchronously
+  const targetCode = submission.assignmentCode || submission.assignmentId;
+  fetch(`/api/assignments/${encodeURIComponent(targetCode)}/submissions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(submission)
+  }).catch((err) => {
+    console.warn('Could not sync submission to server backend:', err);
+  });
+
   return submission;
 }
 

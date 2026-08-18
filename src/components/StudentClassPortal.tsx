@@ -8,7 +8,9 @@ import {
 } from '../types';
 import { 
   getAssignmentByCode, 
+  getAssignmentByCodeAsync,
   getAllAssignments, 
+  getAllAssignmentsAsync,
   saveClassSubmission 
 } from '../utils/classAssignmentStorage';
 import { getStoredApiKey } from '../utils/apiKeyUtils';
@@ -50,29 +52,52 @@ export const StudentClassPortal: React.FC<StudentClassPortalProps> = ({
   const [answerText, setAnswerText] = useState<string>('');
   const [pasteWarning, setPasteWarning] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [isSearching, setIsSearching] = useState<boolean>(false);
   const [submissionFeedback, setSubmissionFeedback] = useState<MarkingFeedback | null>(null);
   const [isSubmittedSuccess, setIsSubmittedSuccess] = useState<boolean>(false);
   const [searchError, setSearchError] = useState<string>('');
-
-  const recentAssignments = getAllAssignments();
+  const [recentAssignments, setRecentAssignments] = useState<ClassAssignment[]>(getAllAssignments());
 
   useEffect(() => {
+    // Sync latest assignments from server
+    getAllAssignmentsAsync().then((list) => {
+      if (list && list.length > 0) {
+        setRecentAssignments(list);
+      }
+    });
+
     if (initialCode) {
       handleFindAssignment(initialCode);
     }
   }, [initialCode]);
 
-  const handleFindAssignment = (codeToSearch: string) => {
+  const handleFindAssignment = async (codeToSearch: string) => {
     setSearchError('');
-    const found = getAssignmentByCode(codeToSearch);
-    if (found) {
-      setActiveAssignment(found);
-      setSelectedTier('Core');
-      setIsSubmittedSuccess(false);
-      setSubmissionFeedback(null);
-    } else {
-      setActiveAssignment(null);
-      setSearchError(`No active assignment found for code "${codeToSearch}". Please verify with your teacher.`);
+    setIsSearching(true);
+    try {
+      const found = await getAssignmentByCodeAsync(codeToSearch);
+      if (found) {
+        setActiveAssignment(found);
+        setSelectedTier('Core');
+        setIsSubmittedSuccess(false);
+        setSubmissionFeedback(null);
+      } else {
+        setActiveAssignment(null);
+        setSearchError(`No active assignment found for PIN "${codeToSearch}". Please check with your teacher.`);
+      }
+    } catch (e) {
+      const localFound = getAssignmentByCode(codeToSearch);
+      if (localFound) {
+        setActiveAssignment(localFound);
+        setSelectedTier('Core');
+        setIsSubmittedSuccess(false);
+        setSubmissionFeedback(null);
+      } else {
+        setActiveAssignment(null);
+        setSearchError(`Could not find assignment for PIN "${codeToSearch}". Please check the code and try again.`);
+      }
+    } finally {
+      setIsSearching(false);
     }
   };
 
