@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DiffusedResult, ClassAssignment } from '../types';
 import { generateAssignmentCode, saveClassAssignment, getStudentDirectUrlWithPayload } from '../utils/classAssignmentStorage';
+import QRCode from 'qrcode';
 import { 
   Users, 
   Copy, 
@@ -11,7 +12,11 @@ import {
   Layers, 
   ArrowRight,
   ShieldCheck,
-  BookOpen
+  BookOpen,
+  QrCode,
+  Globe,
+  ExternalLink,
+  HelpCircle
 } from 'lucide-react';
 
 interface TeacherAssignModalProps {
@@ -35,15 +40,29 @@ export const TeacherAssignModal: React.FC<TeacherAssignModalProps> = ({
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [createdAssignment, setCreatedAssignment] = useState<ClassAssignment | null>(null);
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
+  const [activeShareTab, setActiveShareTab] = useState<'link' | 'qr'>('link');
 
   // Initialize title when result changes
-  React.useEffect(() => {
+  useEffect(() => {
     if (result) {
       const derivedTitle = result.context ? `${result.context} Task` : 'Class Differentiated Task';
       setTitle(derivedTitle);
       setCreatedAssignment(null);
+      setCopiedCode(false);
+      setCopiedLink(false);
+      setQrCodeDataUrl('');
     }
   }, [result]);
+
+  useEffect(() => {
+    if (createdAssignment) {
+      const url = getStudentDirectUrlWithPayload(createdAssignment);
+      QRCode.toDataURL(url, { width: 260, margin: 2, color: { dark: '#312e81', light: '#ffffff' } })
+        .then((dataUrl) => setQrCodeDataUrl(dataUrl))
+        .catch((e) => console.warn('QR code generation failed:', e));
+    }
+  }, [createdAssignment]);
 
   if (!isOpen || !result) return null;
 
@@ -236,47 +255,100 @@ export const TeacherAssignModal: React.FC<TeacherAssignModalProps> = ({
               </div>
             </form>
           ) : (
-            <div className="space-y-6 text-center animate-fadeIn">
+            <div className="space-y-5 text-center animate-fadeIn">
               <div className="inline-flex p-3 bg-emerald-100 text-emerald-700 rounded-2xl">
-                <ShieldCheck className="w-8 h-8" />
+                <ShieldCheck className="w-7 h-7" />
               </div>
 
               <div>
-                <h3 className="font-sans font-bold text-xl text-slate-900 mb-1">
-                  Assignment Live &amp; Ready for Class!
+                <h3 className="font-sans font-bold text-xl text-slate-900 mb-0.5">
+                  Assignment Live &amp; Ready for Students!
                 </h3>
                 <p className="font-serif text-xs text-slate-600">
-                  Students can now join this common task on their Chromebooks or devices.
+                  Share the Direct Link or project the QR Code for your students.
                 </p>
               </div>
 
-              {/* Big Class Code Card */}
-              <div className="bg-gradient-to-br from-indigo-50 via-purple-50 to-blue-50 border-2 border-indigo-300 rounded-2xl p-5 max-w-sm mx-auto shadow-sm">
-                <span className="font-mono text-[10px] uppercase tracking-widest text-indigo-700 font-bold block mb-1">
-                  Class Join PIN / Code
-                </span>
-                <div className="font-mono font-extrabold text-3xl sm:text-4xl text-indigo-900 tracking-wider mb-3">
-                  {createdAssignment.code}
-                </div>
-                
-                <div className="flex items-center justify-center gap-2">
-                  <button
-                    onClick={() => handleCopyCode(createdAssignment.code)}
-                    className="inline-flex items-center gap-1.5 font-mono text-xs font-bold bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50 px-3.5 py-1.5 rounded-lg transition-all cursor-pointer shadow-2xs"
-                  >
-                    {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                    {copiedCode ? 'Code Copied!' : 'Copy PIN'}
-                  </button>
-
-                  <button
-                    onClick={() => handleCopyLink(createdAssignment.code)}
-                    className="inline-flex items-center gap-1.5 font-mono text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 px-3.5 py-1.5 rounded-lg transition-all cursor-pointer shadow-2xs"
-                  >
-                    {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5" />}
-                    {copiedLink ? 'Link Copied!' : 'Copy Direct Link'}
-                  </button>
-                </div>
+              {/* Tab Selector for Sharing Method */}
+              <div className="flex items-center justify-center gap-1 bg-slate-100 p-1 rounded-xl max-w-xs mx-auto text-xs font-mono">
+                <button
+                  type="button"
+                  onClick={() => setActiveShareTab('link')}
+                  className={`flex-1 py-1.5 px-3 rounded-lg font-bold transition-all cursor-pointer ${activeShareTab === 'link' ? 'bg-white text-indigo-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  🔗 Direct Link &amp; PIN
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveShareTab('qr')}
+                  className={`flex-1 py-1.5 px-3 rounded-lg font-bold transition-all cursor-pointer ${activeShareTab === 'qr' ? 'bg-white text-indigo-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  📱 Projector QR Code
+                </button>
               </div>
+
+              {activeShareTab === 'link' ? (
+                <div className="space-y-3">
+                  {/* Big Class Code Card */}
+                  <div className="bg-gradient-to-br from-indigo-50 via-purple-50 to-blue-50 border-2 border-indigo-300 rounded-2xl p-4 max-w-sm mx-auto shadow-sm">
+                    <span className="font-mono text-[10px] uppercase tracking-widest text-indigo-700 font-bold block mb-1">
+                      Class Join PIN
+                    </span>
+                    <div className="font-mono font-extrabold text-3xl sm:text-4xl text-indigo-900 tracking-wider mb-3">
+                      {createdAssignment.code}
+                    </div>
+                    
+                    <div className="flex items-center justify-center gap-2">
+                      <button
+                        onClick={() => handleCopyCode(createdAssignment.code)}
+                        className="inline-flex items-center gap-1.5 font-mono text-xs font-bold bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-2xs"
+                      >
+                        {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedCode ? 'Code Copied!' : 'Copy PIN'}
+                      </button>
+
+                      <button
+                        onClick={() => handleCopyLink(createdAssignment.code)}
+                        className="inline-flex items-center gap-1.5 font-mono text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 px-3.5 py-1.5 rounded-lg transition-all cursor-pointer shadow-2xs"
+                      >
+                        {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5" />}
+                        {copiedLink ? 'Link Copied!' : 'Copy Direct Link'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-left max-w-md mx-auto">
+                    <div className="flex items-start gap-2">
+                      <Globe className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                      <p className="text-[11px] text-indigo-900 font-serif leading-relaxed">
+                        <strong>Teacher Tip:</strong> For students on Chromebooks or mobile, sharing the <strong>Direct Link</strong> (via Google Classroom / Teams / WhatsApp) opens the exact task with 1-click on any device!
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="bg-white border-2 border-indigo-300 rounded-2xl p-4 max-w-xs mx-auto shadow-sm flex flex-col items-center">
+                    {qrCodeDataUrl ? (
+                      <img 
+                        src={qrCodeDataUrl} 
+                        alt="Classroom QR Code" 
+                        className="w-48 h-48 rounded-xl border border-slate-100 shadow-xs"
+                      />
+                    ) : (
+                      <div className="w-48 h-48 bg-slate-100 rounded-xl flex items-center justify-center text-xs font-mono text-slate-400">
+                        Generating QR Code...
+                      </div>
+                    )}
+                    <span className="font-mono text-xs font-bold text-indigo-900 mt-2">
+                      PIN: {createdAssignment.code}
+                    </span>
+                    <p className="font-serif text-[11px] text-slate-500 mt-0.5">
+                      Scan with mobile or Chromebook camera
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Action Buttons */}
               <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">

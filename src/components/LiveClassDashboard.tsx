@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import QRCode from 'qrcode';
 import { ClassAssignment, ClassSubmission, TierType } from '../types';
 import { 
   getAllAssignments, 
@@ -39,7 +40,8 @@ import {
   UserCheck,
   Calendar,
   BookOpen,
-  Share2
+  Share2,
+  QrCode
 } from 'lucide-react';
 
 interface LiveClassDashboardProps {
@@ -64,6 +66,19 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
   const [copiedStudentLink, setCopiedStudentLink] = useState<boolean>(false);
   const [activeDetailSubmission, setActiveDetailSubmission] = useState<ClassSubmission | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState<string>(new Date().toLocaleTimeString());
+  const [showQrModal, setShowQrModal] = useState<boolean>(false);
+  const [qrModalDataUrl, setQrModalDataUrl] = useState<string>('');
+
+  const handleOpenQrModal = async (assignment: ClassAssignment) => {
+    try {
+      const url = getStudentDirectUrlWithPayload(assignment);
+      const dataUrl = await QRCode.toDataURL(url, { width: 320, margin: 2, color: { dark: '#312e81', light: '#ffffff' } });
+      setQrModalDataUrl(dataUrl);
+      setShowQrModal(true);
+    } catch (e) {
+      console.warn('Failed to generate QR code:', e);
+    }
+  };
 
   // Student Tracker specific filters
   const [selectedTeacherFilter, setSelectedTeacherFilter] = useState<string>('All');
@@ -508,10 +523,18 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
 
                           <button
                             onClick={() => handleCopyDirectStudentLink(activeAssignment.code)}
-                            className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold bg-indigo-500/80 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-xs w-full justify-center border border-indigo-400/40"
+                            className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold bg-indigo-500/90 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-xs w-full justify-center border border-indigo-400/40"
                           >
                             {copiedStudentLink ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Share2 className="w-3.5 h-3.5" />}
-                            {copiedStudentLink ? 'Direct Link Copied!' : 'Copy Student Link (Isolated)'}
+                            {copiedStudentLink ? 'Direct Link Copied!' : 'Copy Direct Student Link'}
+                          </button>
+
+                          <button
+                            onClick={() => handleOpenQrModal(activeAssignment)}
+                            className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold bg-purple-500/80 hover:bg-purple-500 text-white px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-xs w-full justify-center border border-purple-400/40"
+                          >
+                            <QrCode className="w-3.5 h-3.5" />
+                            Project Class QR Code
                           </button>
                         </div>
                       </div>
@@ -1214,6 +1237,68 @@ export const LiveClassDashboard: React.FC<LiveClassDashboardProps> = ({
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Classroom Projector QR Modal */}
+      {showQrModal && activeAssignment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white border-2 border-indigo-500 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden text-center p-6 space-y-4 animate-scaleUp">
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 px-3 py-1 rounded-full">
+                Classroom Projector View
+              </span>
+              <button
+                onClick={() => setShowQrModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div>
+              <h3 className="font-sans font-extrabold text-2xl text-slate-900">
+                {activeAssignment.title}
+              </h3>
+              <p className="font-mono text-xs text-slate-500 mt-1">
+                Curriculum: {activeAssignment.curriculum || 'Standard'} • {activeAssignment.gradeLevel || activeAssignment.context}
+              </p>
+            </div>
+
+            <div className="bg-slate-50 border-2 border-indigo-200 rounded-2xl p-4 flex flex-col items-center justify-center shadow-inner">
+              {qrModalDataUrl ? (
+                <img 
+                  src={qrModalDataUrl} 
+                  alt="Classroom QR Code" 
+                  className="w-64 h-64 rounded-xl border border-slate-200 shadow-sm"
+                />
+              ) : (
+                <div className="w-64 h-64 flex items-center justify-center font-mono text-xs text-slate-400">
+                  Generating QR code...
+                </div>
+              )}
+
+              <div className="mt-3">
+                <span className="font-mono text-xs uppercase tracking-widest text-slate-500 font-bold block">
+                  Join PIN Code:
+                </span>
+                <span className="font-mono font-extrabold text-4xl text-indigo-900 tracking-wider">
+                  {activeAssignment.code}
+                </span>
+              </div>
+            </div>
+
+            <p className="font-serif text-xs text-slate-600">
+              Students can scan this code with their Chromebook / phone camera or visit the site and enter PIN <strong>{activeAssignment.code}</strong>.
+            </p>
+
+            <button
+              onClick={() => setShowQrModal(false)}
+              className="w-full font-sans font-bold text-sm bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-xl transition-all cursor-pointer"
+            >
+              Close Projector View
+            </button>
           </div>
         </div>
       )}

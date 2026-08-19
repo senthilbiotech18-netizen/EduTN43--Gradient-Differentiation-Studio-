@@ -1,4 +1,10 @@
 import { ClassAssignment, ClassSubmission, TierType } from '../types';
+import { 
+  pushAssignmentToCloudRelay, 
+  fetchAssignmentFromCloudRelay, 
+  pushSubmissionToCloudRelay, 
+  fetchSubmissionsFromCloudRelay 
+} from './cloudSyncRelay';
 
 const ASSIGNMENTS_STORAGE_KEY = 'edutn43_class_assignments_v1';
 const SUBMISSIONS_STORAGE_KEY = 'edutn43_class_submissions_v1';
@@ -100,22 +106,42 @@ export function getAssignmentByCode(code: string): ClassAssignment | null {
 export async function getAssignmentByCodeAsync(code: string): Promise<ClassAssignment | null> {
   const normalized = code.trim().toUpperCase().replace(/\s+/g, '-');
   
-  // 1. Try server API first to ensure students on other devices get the live teacher's task
+  // 1. Try local cache first if available
+  const localMatch = getAssignmentByCode(code);
+  if (localMatch) {
+    return localMatch;
+  }
+
+  // 2. Try server API (Express full-stack backend)
   try {
     const res = await fetch(`/api/assignments/${encodeURIComponent(normalized)}`);
     if (res.ok) {
-      const data = await res.json();
-      if (data.assignment) {
-        // Cache assignment into local browser storage for offline resilience
-        saveClassAssignmentLocal(data.assignment);
-        return data.assignment;
+      const text = await res.text();
+      // Ensure it's actual JSON, not an HTML SPA fallback
+      if (text.startsWith('{')) {
+        const data = JSON.parse(text);
+        if (data && data.assignment) {
+          saveClassAssignmentLocal(data.assignment);
+          return data.assignment;
+        }
       }
     }
   } catch (e) {
-    console.warn('Network lookup for assignment failed, checking local cache:', e);
+    console.warn('Backend lookup failed, trying cloud relay:', e);
   }
 
-  // 2. Fallback to local storage
+  // 3. Try Universal Cloud Relay (works across separate devices, Vercel, Chromebooks, and mobile)
+  try {
+    const cloudAssignment = await fetchAssignmentFromCloudRelay(normalized);
+    if (cloudAssignment) {
+      saveClassAssignmentLocal(cloudAssignment);
+      return cloudAssignment;
+    }
+  } catch (e) {
+    console.warn('Cloud relay lookup failed:', e);
+  }
+
+  // 4. Final fallback to local cache
   return getAssignmentByCode(code);
 }
 
@@ -248,13 +274,18 @@ export function saveClassAssignment(assignment: ClassAssignment): ClassAssignmen
   saveClassAssignmentLocal(assignment);
   broadcastSync('assignment_created');
 
-  // Push to server asynchronously so students on other devices can access it immediately
+  // 1. Push to server asynchronously
   fetch('/api/assignments', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(assignment)
   }).catch((err) => {
     console.warn('Could not sync assignment to server backend:', err);
+  });
+
+  // 2. Push to Universal Cloud Relay for instant cross-device PIN availability
+  pushAssignmentToCloudRelay(assignment).catch((err) => {
+    console.warn('Could not push assignment to cloud relay:', err);
   });
 
   return assignment;
@@ -295,25 +326,44 @@ export function getSubmissionsForAssignment(assignmentId: string): ClassSubmissi
 }
 
 export async function fetchRemoteSubmissions(assignmentId: string): Promise<ClassSubmission[]> {
+  const local = getAllSubmissions();
+  const subMap = new Map<string, ClassSubmission>();
+  local.filter(s => s.assignmentId === assignmentId).forEach((s) => subMap.set(s.id, s));
+
+  // 1. Try server backend
   try {
     const res = await fetch(`/api/assignments/${encodeURIComponent(assignmentId)}/submissions`);
     if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.submissions)) {
-        // Merge with local storage
-        const local = getAllSubmissions();
-        const subMap = new Map<string, ClassSubmission>();
-        local.forEach((s) => subMap.set(s.id, s));
-        data.submissions.forEach((s: ClassSubmission) => subMap.set(s.id, s));
-        const merged = Array.from(subMap.values());
-        localStorage.setItem(SUBMISSIONS_STORAGE_KEY, JSON.stringify(merged));
-        return data.submissions;
+      const text = await res.text();
+      if (text.startsWith('{')) {
+        const data = JSON.parse(text);
+        if (Array.isArray(data.submissions)) {
+          data.submissions.forEach((s: ClassSubmission) => subMap.set(s.id, s));
+        }
       }
     }
   } catch (e) {
     console.warn('Failed to fetch remote submissions from server:', e);
   }
-  return getSubmissionsForAssignment(assignmentId);
+
+  // 2. Try Universal Cloud Relay
+  try {
+    const cloudSubs = await fetchSubmissionsFromCloudRelay(assignmentId);
+    if (Array.isArray(cloudSubs)) {
+      cloudSubs.forEach((s: ClassSubmission) => subMap.set(s.id, s));
+    }
+  } catch (e) {
+    console.warn('Failed to fetch submissions from cloud relay:', e);
+  }
+
+  const merged = Array.from(subMap.values());
+  const allSubs = getAllSubmissions();
+  const allMap = new Map<string, ClassSubmission>();
+  allSubs.forEach(s => allMap.set(s.id, s));
+  merged.forEach(s => allMap.set(s.id, s));
+  localStorage.setItem(SUBMISSIONS_STORAGE_KEY, JSON.stringify(Array.from(allMap.values())));
+
+  return merged;
 }
 
 export function saveClassSubmission(submission: ClassSubmission): ClassSubmission {
@@ -331,7 +381,7 @@ export function saveClassSubmission(submission: ClassSubmission): ClassSubmissio
   localStorage.setItem(SUBMISSIONS_STORAGE_KEY, JSON.stringify(updated));
   broadcastSync('submission_added');
 
-  // Push to server asynchronously
+  // 1. Push to server asynchronously
   const targetCode = submission.assignmentCode || submission.assignmentId;
   fetch(`/api/assignments/${encodeURIComponent(targetCode)}/submissions`, {
     method: 'POST',
@@ -339,6 +389,11 @@ export function saveClassSubmission(submission: ClassSubmission): ClassSubmissio
     body: JSON.stringify(submission)
   }).catch((err) => {
     console.warn('Could not sync submission to server backend:', err);
+  });
+
+  // 2. Push to Universal Cloud Relay
+  pushSubmissionToCloudRelay(submission).catch((err) => {
+    console.warn('Could not push submission to cloud relay:', err);
   });
 
   return submission;
